@@ -1,21 +1,11 @@
 import streamlit as st
-import os
-import openai
 import csv
 from datetime import datetime
 import random
-from dotenv import load_dotenv, find_dotenv
+from groq import Groq
 
-# Cargar variables de entorno
-load_dotenv(find_dotenv())
-
-# Configurar la clave API de OpenAI
-openai.api_key = os.getenv('OPENAI_API_KEY')
-
-# Verificar si la clave API está configurada
-if not openai.api_key:
-    st.error("La clave API de OpenAI no está configurada. Por favor, configúrala en el archivo .env o en las variables de entorno.")
-    st.stop()
+# Inicialización del cliente Groq
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # Inicialización de variables de estado de Streamlit
 if 'menu' not in st.session_state:
@@ -68,7 +58,7 @@ def process_user_query(query):
 
 def consult_menu_csv(query):
     response = "Aquí está nuestro menú:\n\n"
-    for category, items in menu.items():
+    for category, items in st.session_state.menu.items():
         response += f"{category}:\n"
         for item in items:
             response += f"- {item['Item']}: {item['Serving Size']}, {item['Calories']} calorías\n"
@@ -78,7 +68,7 @@ def consult_menu_csv(query):
 def get_nutritional_info(query):
     item_name = query.split("de ")[-1].strip().lower()
     
-    for category, items in menu.items():
+    for category, items in st.session_state.menu.items():
         for item in items:
             if item['Item'].lower() == item_name:
                 return f"Información nutricional para {item['Item']}:\n" \
@@ -92,107 +82,69 @@ def get_nutritional_info(query):
     return "Lo siento, no pude encontrar información nutricional para ese artículo."
 
 def start_order_process(query):
-    category = random.choice(list(menu.keys()))
-    order = random.choice(menu[category])
+    category = random.choice(list(st.session_state.menu.keys()))
+    order = random.choice(st.session_state.menu[category])
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"Orden registrada: {order['Item']} - Timestamp: {timestamp}"
 
 def consult_delivery_cities(query):
     response = "Realizamos entregas en las siguientes ciudades:\n"
-    for city in delivery_cities[:10]:  # Mostrar solo las primeras 10 ciudades para no sobrecargar la respuesta
+    for city in st.session_state.delivery_cities[:10]:  # Mostrar solo las primeras 10 ciudades
         response += f"- {city}\n"
     response += "... y más ciudades. ¿Hay alguna ciudad específica que te interese?"
     return response
 
 def process_general_query(query):
-    messages = [
-        {'role': 'system', 'content': 'Eres un asistente de restaurante amable y servicial.'},
-        {'role': 'user', 'content': query}
-    ]
-    return get_completion_from_messages(messages)
-
-def get_completion_from_messages(messages, model="gpt-3.5-turbo", temperature=0, max_tokens=500):
-    response = openai.ChatCompletion.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+            {"role": "user", "content": query}
+        ],
+        model="mixtral-8x7b-32768",
+        max_tokens=500
     )
-    return response.choices[0].message["content"]
+    return chat_completion.choices[0].message.content
 
 def generate_response(query_result):
-    prompt = f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"
-    
-    messages = [
-        {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-        {"role": "user", "content": prompt}
-    ]
-    
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=150,
-            n=1,
-            stop=None,
-            temperature=0.7,
-        )
-        return response.choices[0].message["content"].strip()
-    except Exception as e:
-        print(f"Error al generar respuesta: {e}")
-        return query_result  # Fallback to original query result if API call fails
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+            {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
+        ],
+        model="mixtral-8x7b-32768",
+        max_tokens=150
+    )
+    return chat_completion.choices[0].message.content
 
 def verify_response_accuracy(response, query_result):
-    prompt = f"""
-    Verifica si la siguiente respuesta es precisa y relevante según la información original:
-    
-    Información original: {query_result}
-    Respuesta generada: {response}
-    
-    Responde con 'Preciso' si la respuesta es correcta y relevante, o 'Impreciso' si contiene errores o información irrelevante.
-    """
-    
-    messages = [
-        {"role": "system", "content": "Eres un asistente que verifica la precisión de las respuestas."},
-        {"role": "user", "content": prompt}
-    ]
-    
-    try:
-        verification = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=10,
-            n=1,
-            stop=None,
-            temperature=0.3,
-        )
-        result = verification.choices[0].message["content"].strip().lower()
-        return "preciso" in result
-    except Exception as e:
-        print(f"Error al verificar respuesta: {e}")
-        return True  # Assume accurate if verification fails
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "Eres un asistente que verifica la precisión de las respuestas."},
+            {"role": "user", "content": f"""
+            Verifica si la siguiente respuesta es precisa y relevante según la información original:
+            
+            Información original: {query_result}
+            Respuesta generada: {response}
+            
+            Responde con 'Preciso' si la respuesta es correcta y relevante, o 'Impreciso' si contiene errores o información irrelevante.
+            """}
+        ],
+        model="mixtral-8x7b-32768",
+        max_tokens=10
+    )
+    result = chat_completion.choices[0].message.content.strip().lower()
+    return "preciso" in result
 
 def regenerate_response(query_result):
-    prompt = f"La respuesta anterior fue imprecisa. Genera una nueva respuesta basada en esta información: '{query_result}'. Asegúrate de que sea precisa y relevante."
-    
-    messages = [
-        {"role": "system", "content": "Eres un asistente de restaurante que genera respuestas precisas y relevantes."},
-        {"role": "user", "content": prompt}
-    ]
-    
-    try:
-        new_response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=150,
-            n=1,
-            stop=None,
-            temperature=0.5,
-        )
-        return new_response.choices[0].message["content"].strip()
-    except Exception as e:
-        print(f"Error al regenerar respuesta: {e}")
-        return query_result  # Fallback to original query result if API call fails
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "Eres un asistente de restaurante que genera respuestas precisas y relevantes."},
+            {"role": "user", "content": f"La respuesta anterior fue imprecisa. Genera una nueva respuesta basada en esta información: '{query_result}'. Asegúrate de que sea precisa y relevante."}
+        ],
+        model="mixtral-8x7b-32768",
+        max_tokens=150
+    )
+    return chat_completion.choices[0].message.content
 
 def process_and_verify_response(query_result):
     response = generate_response(query_result)
@@ -209,15 +161,20 @@ def process_and_verify_response(query_result):
     return query_result  # Fallback to original query result if all attempts fail
 
 def adjust_tone(response):
-    messages = [
-        {'role': 'system', 'content': 'Ajusta el tono del siguiente mensaje para que sea formal pero amigable.'},
-        {'role': 'user', 'content': response}
-    ]
-    return get_completion_from_messages(messages)
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": "Ajusta el tono del siguiente mensaje para que sea formal pero amigable."},
+            {"role": "user", "content": response}
+        ],
+        model="mixtral-8x7b-32768",
+        max_tokens=150
+    )
+    return chat_completion.choices[0].message.content
 
 def moderate_chatbot_response(response):
     offensive_words = ['palabrota1', 'palabrota2', 'palabrota3']  # Add more as needed
     return not any(word in response.lower() for word in offensive_words)
+
 def main():
     st.title("Chatbot de Restaurante")
     
