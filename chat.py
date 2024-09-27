@@ -7,10 +7,10 @@ from groq import Groq
 # Inicialización del cliente Groq
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    st.session_state.groq_available = True
+    session_state.groq_available = True
 except Exception as e:
-    st.error(f"Error al inicializar el cliente Groq: {e}")
-    st.session_state.groq_available = False
+    serror(f"Error al inicializar el cliente Groq: {e}")
+    session_state.groq_available = False
 
 
 # Inicialización de variables de estado de Streamlit
