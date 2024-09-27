@@ -13,6 +13,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'groq_available' not in st.session_state:
     st.session_state.groq_available = False
+if 'chatbot_initialized' not in st.session_state:
+    st.session_state.chatbot_initialized = False
 
 # Inicialización del cliente Groq
 try:
@@ -22,13 +24,10 @@ try:
         st.session_state.groq_available = True
     else:
         st.warning("La clave API de Groq no está configurada. Algunas funciones avanzadas no estarán disponibles.")
-        st.session_state.groq_available = False
 except ImportError:
     st.warning("No se pudo importar la biblioteca Groq. Algunas funciones avanzadas no estarán disponibles.")
-    st.session_state.groq_available = False
 except Exception as e:
     st.error(f"Error al inicializar el cliente Groq: {e}")
-    st.session_state.groq_available = False
 
 def load_menu_from_csv():
     try:
@@ -58,6 +57,7 @@ def initialize_chatbot():
     menu_loaded = load_menu_from_csv()
     cities_loaded = load_delivery_cities()
     if menu_loaded and cities_loaded:
+        st.session_state.chatbot_initialized = True
         st.success("Chatbot initialized successfully!")
     else:
         st.warning("Chatbot initialized with limited functionality.")
@@ -67,16 +67,26 @@ def moderate_content(message):
     return not any(word in message.lower() for word in offensive_words)
 
 def process_user_query(query):
-    if "menú" in query.lower() or "carta" in query.lower():
-        return consult_menu_csv(query)
-    elif "pedir" in query.lower() or "ordenar" in query.lower():
-        return start_order_process(query)
-    elif "entrega" in query.lower() or "reparto" in query.lower():
-        return consult_delivery_cities(query)
-    elif "información nutricional" in query.lower() or "calorías" in query.lower():
-        return get_nutritional_info(query)
+    if not st.session_state.chatbot_initialized:
+        return "Por favor, inicializa el chatbot primero usando el botón 'Inicializar Chatbot'."
+    
+    query_lower = query.lower()
+    if "menú" in query_lower or "carta" in query_lower:
+        return consult_menu_csv(query_lower)
+    elif "pedir" in query_lower or "ordenar" in query_lower:
+        return start_order_process(query_lower)
+    elif "entrega" in query_lower or "reparto" in query_lower:
+        return consult_delivery_cities(query_lower)
+    elif "información nutricional" in query_lower or "calorías" in query_lower:
+        return get_nutritional_info(query_lower)
+    elif "desayuno" in query_lower or "breakfast" in query_lower:
+        return get_breakfast_info()
+    elif "horario" in query_lower:
+        return get_restaurant_hours()
+    elif "especial" in query_lower:
+        return get_daily_specials()
     else:
-        return process_general_query(query)
+        return process_general_query(query_lower)
 
 def consult_menu_csv(query):
     if not st.session_state.menu:
@@ -122,6 +132,22 @@ def consult_delivery_cities(query):
     response += "... y más ciudades. ¿Hay alguna ciudad específica que te interese?"
     return response
 
+def get_breakfast_info():
+    breakfast_items = [item for items in st.session_state.menu.values() for item in items if 'breakfast' in item['Item'].lower()]
+    if breakfast_items:
+        response = "Nuestras opciones de desayuno incluyen:\n"
+        for item in breakfast_items:
+            response += f"- {item['Item']}: {item['Serving Size']}, {item['Calories']} calorías\n"
+        return response
+    else:
+        return "Lo siento, no tenemos información específica sobre desayunos en este momento."
+
+def get_restaurant_hours():
+    return "Nuestro horario de atención es:\nLunes a Viernes: 7:00 AM - 10:00 PM\nSábados y Domingos: 8:00 AM - 11:00 PM"
+
+def get_daily_specials():
+    return "El especial del día de hoy es: Pasta Primavera con ensalada César por $12.99"
+
 def process_general_query(query):
     if st.session_state.groq_available:
         try:
@@ -136,27 +162,9 @@ def process_general_query(query):
             return chat_completion.choices[0].message.content
         except Exception as e:
             st.error(f"Error al procesar la consulta con Groq: {e}")
-            return "Lo siento, hubo un problema al procesar tu consulta. Por favor, intenta de nuevo."
+            return "Lo siento, hubo un problema al procesar tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, horarios o especiales del día?"
     else:
-        return "Lo siento, no puedo procesar consultas generales en este momento. ¿Puedo ayudarte con información sobre nuestro menú, pedidos o entregas?"
-
-def generate_response(query_result):
-    if st.session_state.groq_available:
-        try:
-            chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-                    {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
-                ],
-                model="mixtral-8x7b-32768",
-                max_tokens=150
-            )
-            return chat_completion.choices[0].message.content
-        except Exception as e:
-            st.error(f"Error al generar la respuesta con Groq: {e}")
-            return query_result
-    else:
-        return query_result  # Fallback to original query result if Groq is not available
+        return "Lo siento, no puedo procesar consultas generales en este momento. ¿Puedo ayudarte con información sobre nuestro menú, horarios de servicio o especiales del día?"
 
 def main():
     st.title("Chatbot de Restaurante")
@@ -164,16 +172,32 @@ def main():
     if st.button("Inicializar Chatbot"):
         initialize_chatbot()
     
+    # Botones para opciones comunes
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Ver Menú"):
+            st.session_state.chat_history.append(("Usuario", "Ver Menú"))
+            response = consult_menu_csv("")
+            st.session_state.chat_history.append(("Chatbot", response))
+    with col2:
+        if st.button("Horario de Atención"):
+            st.session_state.chat_history.append(("Usuario", "Horario de Atención"))
+            response = get_restaurant_hours()
+            st.session_state.chat_history.append(("Chatbot", response))
+    with col3:
+        if st.button("Especial del Día"):
+            st.session_state.chat_history.append(("Usuario", "Especial del Día"))
+            response = get_daily_specials()
+            st.session_state.chat_history.append(("Chatbot", response))
+    
     user_message = st.text_input("Escribe tu mensaje aquí:")
     
     if st.button("Enviar"):
         if not moderate_content(user_message):
             st.error("Lo siento, tu mensaje no es apropiado. Por favor, intenta de nuevo.")
         else:
-            query_result = process_user_query(user_message)
-            response = generate_response(query_result)
-            
             st.session_state.chat_history.append(("Usuario", user_message))
+            response = process_user_query(user_message)
             st.session_state.chat_history.append(("Chatbot", response))
     
     st.subheader("Historial de Chat")
