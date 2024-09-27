@@ -9,7 +9,7 @@ try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     session_state.groq_available = True
 except Exception as e:
-    serror(f"Error al inicializar el cliente Groq: {e}")
+    st.serror(f"Error al inicializar el cliente Groq: {e}")
     session_state.groq_available = False
 
 
