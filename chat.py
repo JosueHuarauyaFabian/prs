@@ -21,10 +21,10 @@ try:
         client = Groq(api_key=st.secrets["GROQ_API_KEY"])
         st.session_state.groq_available = True
     else:
-        st.warning("La clave API de Groq no está configurada. Algunas funciones pueden no estar disponibles.")
+        st.warning("La clave API de Groq no está configurada. Algunas funciones avanzadas no estarán disponibles.")
         st.session_state.groq_available = False
 except ImportError:
-    st.warning("No se pudo importar la biblioteca Groq. Algunas funciones pueden no estar disponibles.")
+    st.warning("No se pudo importar la biblioteca Groq. Algunas funciones avanzadas no estarán disponibles.")
     st.session_state.groq_available = False
 except Exception as e:
     st.error(f"Error al inicializar el cliente Groq: {e}")
@@ -39,21 +39,28 @@ def load_menu_from_csv():
                 if category not in st.session_state.menu:
                     st.session_state.menu[category] = []
                 st.session_state.menu[category].append(row)
+        return True
     except FileNotFoundError:
         st.error("Error: menu.csv file not found.")
+        return False
 
 def load_delivery_cities():
     try:
         with open('us-cities.csv', 'r') as file:
             reader = csv.DictReader(file)
             st.session_state.delivery_cities = [f"{row['City']}, {row['State short']}" for row in reader]
+        return True
     except FileNotFoundError:
         st.error("Error: us-cities.csv file not found.")
+        return False
 
 def initialize_chatbot():
-    load_menu_from_csv()
-    load_delivery_cities()
-    st.success("Chatbot initialized successfully!")
+    menu_loaded = load_menu_from_csv()
+    cities_loaded = load_delivery_cities()
+    if menu_loaded and cities_loaded:
+        st.success("Chatbot initialized successfully!")
+    else:
+        st.warning("Chatbot initialized with limited functionality.")
 
 def moderate_content(message):
     offensive_words = ['palabrota1', 'palabrota2', 'palabrota3']  # Add more as needed
@@ -72,6 +79,8 @@ def process_user_query(query):
         return process_general_query(query)
 
 def consult_menu_csv(query):
+    if not st.session_state.menu:
+        return "Lo siento, el menú no está disponible en este momento."
     response = "Aquí está nuestro menú:\n\n"
     for category, items in st.session_state.menu.items():
         response += f"{category}:\n"
@@ -81,8 +90,9 @@ def consult_menu_csv(query):
     return response
 
 def get_nutritional_info(query):
+    if not st.session_state.menu:
+        return "Lo siento, la información nutricional no está disponible en este momento."
     item_name = query.split("de ")[-1].strip().lower()
-    
     for category, items in st.session_state.menu.items():
         for item in items:
             if item['Item'].lower() == item_name:
@@ -93,16 +103,19 @@ def get_nutritional_info(query):
                        f"Sodio: {item['Sodium']}mg ({item['Sodium (% Daily Value)']}% del valor diario)\n" \
                        f"Carbohidratos: {item['Carbohydrates']}g ({item['Carbohydrates (% Daily Value)']}% del valor diario)\n" \
                        f"Proteínas: {item['Protein']}g"
-    
     return "Lo siento, no pude encontrar información nutricional para ese artículo."
 
 def start_order_process(query):
+    if not st.session_state.menu:
+        return "Lo siento, no puedo procesar pedidos en este momento."
     category = random.choice(list(st.session_state.menu.keys()))
     order = random.choice(st.session_state.menu[category])
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"Orden registrada: {order['Item']} - Timestamp: {timestamp}"
 
 def consult_delivery_cities(query):
+    if not st.session_state.delivery_cities:
+        return "Lo siento, la información de entrega no está disponible en este momento."
     response = "Realizamos entregas en las siguientes ciudades:\n"
     for city in st.session_state.delivery_cities[:10]:  # Mostrar solo las primeras 10 ciudades
         response += f"- {city}\n"
@@ -125,7 +138,7 @@ def process_general_query(query):
             st.error(f"Error al procesar la consulta con Groq: {e}")
             return "Lo siento, hubo un problema al procesar tu consulta. Por favor, intenta de nuevo."
     else:
-        return "Lo siento, no puedo procesar consultas generales en este momento debido a limitaciones técnicas."
+        return "Lo siento, no puedo procesar consultas generales en este momento. ¿Puedo ayudarte con información sobre nuestro menú, pedidos o entregas?"
 
 def generate_response(query_result):
     if st.session_state.groq_available:
