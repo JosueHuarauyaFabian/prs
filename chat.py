@@ -1,11 +1,19 @@
 import streamlit as st
+import os
 import csv
 from datetime import datetime
 import random
-from groq import Groq
 
 # Inicialización del cliente Groq
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+try:
+    from groq import Groq
+    if "GROQ_API_KEY" in st.secrets:
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        st.session_state.groq_available = True
+    else:
+        st.session_state.groq_available = False
+except ImportError:
+    st.session_state.groq_available = False
 
 # Inicialización de variables de estado de Streamlit
 if 'menu' not in st.session_state:
@@ -95,88 +103,46 @@ def consult_delivery_cities(query):
     return response
 
 def process_general_query(query):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-            {"role": "user", "content": query}
-        ],
-        model="mixtral-8x7b-32768",
-        max_tokens=500
-    )
-    return chat_completion.choices[0].message.content
+    if st.session_state.groq_available:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+                {"role": "user", "content": query}
+            ],
+            model="mixtral-8x7b-32768",
+            max_tokens=500
+        )
+        return chat_completion.choices[0].message.content
+    else:
+        return "Lo siento, no puedo procesar consultas generales en este momento debido a limitaciones técnicas."
 
 def generate_response(query_result):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-            {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
-        ],
-        model="mixtral-8x7b-32768",
-        max_tokens=150
-    )
-    return chat_completion.choices[0].message.content
-
-def verify_response_accuracy(response, query_result):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "Eres un asistente que verifica la precisión de las respuestas."},
-            {"role": "user", "content": f"""
-            Verifica si la siguiente respuesta es precisa y relevante según la información original:
-            
-            Información original: {query_result}
-            Respuesta generada: {response}
-            
-            Responde con 'Preciso' si la respuesta es correcta y relevante, o 'Impreciso' si contiene errores o información irrelevante.
-            """}
-        ],
-        model="mixtral-8x7b-32768",
-        max_tokens=10
-    )
-    result = chat_completion.choices[0].message.content.strip().lower()
-    return "preciso" in result
-
-def regenerate_response(query_result):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "Eres un asistente de restaurante que genera respuestas precisas y relevantes."},
-            {"role": "user", "content": f"La respuesta anterior fue imprecisa. Genera una nueva respuesta basada en esta información: '{query_result}'. Asegúrate de que sea precisa y relevante."}
-        ],
-        model="mixtral-8x7b-32768",
-        max_tokens=150
-    )
-    return chat_completion.choices[0].message.content
-
-def process_and_verify_response(query_result):
-    response = generate_response(query_result)
-    attempts = 0
-    max_attempts = 3
-    
-    while attempts < max_attempts:
-        if verify_response_accuracy(response, query_result):
-            return response
-        else:
-            response = regenerate_response(query_result)
-            attempts += 1
-    
-    return query_result  # Fallback to original query result if all attempts fail
-
-def adjust_tone(response):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": "Ajusta el tono del siguiente mensaje para que sea formal pero amigable."},
-            {"role": "user", "content": response}
-        ],
-        model="mixtral-8x7b-32768",
-        max_tokens=150
-    )
-    return chat_completion.choices[0].message.content
-
-def moderate_chatbot_response(response):
-    offensive_words = ['palabrota1', 'palabrota2', 'palabrota3']  # Add more as needed
-    return not any(word in response.lower() for word in offensive_words)
+    if st.session_state.groq_available:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+                {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
+            ],
+            model="mixtral-8x7b-32768",
+            max_tokens=150
+        )
+        return chat_completion.choices[0].message.content
+    else:
+        return query_result  # Fallback to original query result if Groq is not available
 
 def main():
     st.title("Chatbot de Restaurante")
+    
+    if not st.session_state.groq_available:
+        st.warning("La API de Groq no está disponible. Algunas funcionalidades estarán limitadas.")
+        st.info("""
+        Para habilitar todas las funcionalidades, sigue estos pasos:
+        1. Obtén una clave API de Groq.
+        2. Configura la clave en los secretos de Streamlit:
+           - En Streamlit Cloud: Ve a la configuración de tu app y agrega GROQ_API_KEY en la sección de Secretos.
+           - Para desarrollo local: Crea un archivo .streamlit/secrets.toml con el contenido: GROQ_API_KEY = "tu_clave_aqui"
+        3. Reinicia la aplicación.
+        """)
     
     if st.button("Inicializar Chatbot"):
         initialize_chatbot()
@@ -188,11 +154,7 @@ def main():
             st.error("Lo siento, tu mensaje no es apropiado. Por favor, intenta de nuevo.")
         else:
             query_result = process_user_query(user_message)
-            response = process_and_verify_response(query_result)
-            response = adjust_tone(response)
-            
-            if not moderate_chatbot_response(response):
-                response = "Lo siento, no puedo proporcionar una respuesta adecuada en este momento."
+            response = generate_response(query_result)
             
             st.session_state.chat_history.append(("Usuario", user_message))
             st.session_state.chat_history.append(("Chatbot", response))
