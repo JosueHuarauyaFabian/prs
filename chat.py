@@ -5,15 +5,7 @@ from datetime import datetime
 import random
 
 # Inicialización del cliente Groq
-try:
-    from groq import Groq
-    if "GROQ_API_KEY" in st.secrets:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-        st.session_state.groq_available = True
-    else:
-        st.session_state.groq_available = False
-except ImportError:
-    st.session_state.groq_available = False
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 # Inicialización de variables de estado de Streamlit
 if 'menu' not in st.session_state:
@@ -133,16 +125,7 @@ def generate_response(query_result):
 def main():
     st.title("Chatbot de Restaurante")
     
-    if not st.session_state.groq_available:
-        st.warning("La API de Groq no está disponible. Algunas funcionalidades estarán limitadas.")
-        st.info("""
-        Para habilitar todas las funcionalidades, sigue estos pasos:
-        1. Obtén una clave API de Groq.
-        2. Configura la clave en los secretos de Streamlit:
-           - En Streamlit Cloud: Ve a la configuración de tu app y agrega GROQ_API_KEY en la sección de Secretos.
-           - Para desarrollo local: Crea un archivo .streamlit/secrets.toml con el contenido: GROQ_API_KEY = "tu_clave_aqui"
-        3. Reinicia la aplicación.
-        """)
+    
     
     if st.button("Inicializar Chatbot"):
         initialize_chatbot()
