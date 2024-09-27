@@ -1,5 +1,4 @@
 import streamlit as st
-import os
 import csv
 from datetime import datetime
 import random
@@ -13,23 +12,18 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'groq_available' not in st.session_state:
     st.session_state.groq_available = False
-if 'chatbot_initialized' not in st.session_state:
-    st.session_state.chatbot_initialized = False
 
-# Inicialización del cliente Groq
+# Inicialización silenciosa del cliente Groq
 try:
     from groq import Groq
     if "GROQ_API_KEY" in st.secrets:
         client = Groq(api_key=st.secrets["GROQ_API_KEY"])
         st.session_state.groq_available = True
-    else:
-        st.warning("La clave API de Groq no está configurada. Algunas funciones avanzadas no estarán disponibles.")
-except ImportError:
-    st.warning("No se pudo importar la biblioteca Groq. Algunas funciones avanzadas no estarán disponibles.")
-except Exception as e:
-    st.error(f"Error al inicializar el cliente Groq: {e}")
+except:
+    pass  # Silenciosamente maneja cualquier error o falta de configuración de Groq
 
-def load_menu_from_csv():
+def load_data():
+    """Carga los datos del menú y las ciudades de entrega."""
     try:
         with open('menu.csv', 'r') as file:
             reader = csv.DictReader(file)
@@ -38,9 +32,13 @@ def load_menu_from_csv():
                 if category not in st.session_state.menu:
                     st.session_state.menu[category] = []
                 st.session_state.menu[category].append(row)
+        
+        with open('us-cities.csv', 'r') as file:
+            reader = csv.DictReader(file)
+            st.session_state.delivery_cities = [f"{row['City']}, {row['State short']}" for row in reader]
+        
         return True
     except FileNotFoundError:
-        st.error("Error: menu.csv file not found.")
         return False
 
 def load_delivery_cities():
@@ -148,7 +146,8 @@ def get_restaurant_hours():
 def get_daily_specials():
     return "El especial del día de hoy es: Pasta Primavera con ensalada César por $12.99"
 
-def process_general_query(query):
+def get_general_response(query):
+    """Procesa consultas generales usando Groq si está disponible."""
     if st.session_state.groq_available:
         try:
             chat_completion = client.chat.completions.create(
@@ -160,49 +159,30 @@ def process_general_query(query):
                 max_tokens=500
             )
             return chat_completion.choices[0].message.content
-        except Exception as e:
-            st.error(f"Error al procesar la consulta con Groq: {e}")
-            return "Lo siento, hubo un problema al procesar tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, horarios o especiales del día?"
-    else:
-        return "Lo siento, no puedo procesar consultas generales en este momento. ¿Puedo ayudarte con información sobre nuestro menú, horarios de servicio o especiales del día?"
-
+        except:
+            pass  # Silenciosamente maneja cualquier error de Groq
+    return "Lo siento, no puedo responder a esa pregunta en este momento. ¿Puedo ayudarte con el menú, horarios o especiales?"
 def main():
     st.title("Chatbot de Restaurante")
     
-    if st.button("Inicializar Chatbot"):
-        initialize_chatbot()
+    if 'initialized' not in st.session_state:
+        if load_data():
+            st.session_state.initialized = True
+        else:
+            st.error("No se pudo inicializar el chatbot. Algunas funciones pueden no estar disponibles.")
     
-    # Botones para opciones comunes
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("Ver Menú"):
-            st.session_state.chat_history.append(("Usuario", "Ver Menú"))
-            response = consult_menu_csv("")
-            st.session_state.chat_history.append(("Chatbot", response))
-    with col2:
-        if st.button("Horario de Atención"):
-            st.session_state.chat_history.append(("Usuario", "Horario de Atención"))
-            response = get_restaurant_hours()
-            st.session_state.chat_history.append(("Chatbot", response))
-    with col3:
-        if st.button("Especial del Día"):
-            st.session_state.chat_history.append(("Usuario", "Especial del Día"))
-            response = get_daily_specials()
-            st.session_state.chat_history.append(("Chatbot", response))
+    st.write("¡Bienvenido a nuestro restaurante! ¿En qué puedo ayudarte hoy?")
+    
+    for message in st.session_state.chat_history:
+        st.text(f"{'Tú:' if message[0] == 'Usuario' else 'Chatbot:'} {message[1]}")
     
     user_message = st.text_input("Escribe tu mensaje aquí:")
     
     if st.button("Enviar"):
-        if not moderate_content(user_message):
-            st.error("Lo siento, tu mensaje no es apropiado. Por favor, intenta de nuevo.")
-        else:
-            st.session_state.chat_history.append(("Usuario", user_message))
-            response = process_user_query(user_message)
-            st.session_state.chat_history.append(("Chatbot", response))
-    
-    st.subheader("Historial de Chat")
-    for role, message in st.session_state.chat_history:
-        st.text(f"{role}: {message}")
+        st.session_state.chat_history.append(("Usuario", user_message))
+        bot_response = get_bot_response(user_message)
+        st.session_state.chat_history.append(("Chatbot", bot_response))
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
