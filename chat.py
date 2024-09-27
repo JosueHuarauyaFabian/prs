@@ -5,8 +5,12 @@ from datetime import datetime
 import random
 from groq import Groq
 # Inicialización del cliente Groq
-
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    st.session_state.groq_available = True
+except Exception as e:
+    st.error(f"Error al inicializar el cliente Groq: {e}")
+    st.session_state.groq_available = False
 
 
 # Inicialización de variables de estado de Streamlit
