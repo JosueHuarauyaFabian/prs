@@ -3,14 +3,6 @@ import os
 import csv
 from datetime import datetime
 import random
-from groq import Groq
-# Inicialización del cliente Groq
-try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    st.session_state.groq_available = True
-except Exception as e:
-    st.error(f"Error al inicializar el cliente Groq: {e}")
-    st.session_state.groq_available = Falses
 
 # Inicialización de variables de estado de Streamlit
 if 'menu' not in st.session_state:
@@ -19,6 +11,24 @@ if 'delivery_cities' not in st.session_state:
     st.session_state.delivery_cities = []
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'groq_available' not in st.session_state:
+    st.session_state.groq_available = False
+
+# Inicialización del cliente Groq
+try:
+    from groq import Groq
+    if "GROQ_API_KEY" in st.secrets:
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        st.session_state.groq_available = True
+    else:
+        st.warning("La clave API de Groq no está configurada. Algunas funciones pueden no estar disponibles.")
+        st.session_state.groq_available = False
+except ImportError:
+    st.warning("No se pudo importar la biblioteca Groq. Algunas funciones pueden no estar disponibles.")
+    st.session_state.groq_available = False
+except Exception as e:
+    st.error(f"Error al inicializar el cliente Groq: {e}")
+    st.session_state.groq_available = False
 
 def load_menu_from_csv():
     try:
@@ -101,36 +111,42 @@ def consult_delivery_cities(query):
 
 def process_general_query(query):
     if st.session_state.groq_available:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-                {"role": "user", "content": query}
-            ],
-            model="mixtral-8x7b-32768",
-            max_tokens=500
-        )
-        return chat_completion.choices[0].message.content
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+                    {"role": "user", "content": query}
+                ],
+                model="mixtral-8x7b-32768",
+                max_tokens=500
+            )
+            return chat_completion.choices[0].message.content
+        except Exception as e:
+            st.error(f"Error al procesar la consulta con Groq: {e}")
+            return "Lo siento, hubo un problema al procesar tu consulta. Por favor, intenta de nuevo."
     else:
         return "Lo siento, no puedo procesar consultas generales en este momento debido a limitaciones técnicas."
 
 def generate_response(query_result):
     if st.session_state.groq_available:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-                {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
-            ],
-            model="mixtral-8x7b-32768",
-            max_tokens=150
-        )
-        return chat_completion.choices[0].message.content
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
+                    {"role": "user", "content": f"Basado en la siguiente información: '{query_result}', genera una respuesta amigable y natural para un cliente de restaurante:"}
+                ],
+                model="mixtral-8x7b-32768",
+                max_tokens=150
+            )
+            return chat_completion.choices[0].message.content
+        except Exception as e:
+            st.error(f"Error al generar la respuesta con Groq: {e}")
+            return query_result
     else:
         return query_result  # Fallback to original query result if Groq is not available
 
 def main():
     st.title("Chatbot de Restaurante")
-    
-    
     
     if st.button("Inicializar Chatbot"):
         initialize_chatbot()
