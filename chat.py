@@ -1,9 +1,9 @@
 import streamlit as st
 import csv
-from groq import Groq
 import json
 from datetime import datetime
 import os
+import re
 
 # Configuración de la página
 st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="wide")
@@ -21,10 +21,18 @@ if 'formal_tone' not in st.session_state:
     st.session_state.formal_tone = True
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
+if 'groq_available' not in st.session_state:
+    st.session_state.groq_available = False
 
-# Configuración de Groq
-groq_api_key = st.secrets.get("GROQ_API_KEY")
-client = Groq(api_key=groq_api_key)
+# Intentar configurar Groq
+try:
+    from groq import Groq
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
+    if groq_api_key:
+        client = Groq(api_key=groq_api_key)
+        st.session_state.groq_available = True
+except Exception as e:
+    print(f"Groq no está disponible: {e}")
 
 def load_data():
     """Carga los datos del menú y los distritos de reparto."""
@@ -117,7 +125,6 @@ def finalize_order():
 
 def verify_response(response):
     """Verifica que la respuesta sea precisa antes de retornarla al usuario."""
-    # Aquí podrías implementar verificaciones más complejas
     if len(response) < 10:
         return False, "La respuesta es demasiado corta. Por favor, elabora más."
     if len(response) > 500:
@@ -127,15 +134,11 @@ def verify_response(response):
 def adjust_tone(response, formal=True):
     """Ajusta el tono de la respuesta según la preferencia del usuario."""
     if formal:
-        # Reemplazar expresiones informales con formales
         response = response.replace("Hola", "Saludos")
         response = response.replace("Chao", "Hasta luego")
-        # Añade más reemplazos según sea necesario
     else:
-        # Reemplazar expresiones formales con informales
         response = response.replace("Saludos", "Hola")
         response = response.replace("Hasta luego", "Chao")
-        # Añade más reemplazos según sea necesario
     return response
 
 def get_bot_response(query):
@@ -150,7 +153,6 @@ def get_bot_response(query):
                 return get_delivery_info(district)
         return get_delivery_info()
     elif "pedir" in query_lower or "ordenar" in query_lower:
-        # Procesamiento simple de pedidos
         items = re.findall(r'(\d+)\s*x\s*(.+?)(?=\d+\s*x|\s*y\s*|\s*,|$)', query_lower)
         if items:
             responses = []
@@ -164,6 +166,10 @@ def get_bot_response(query):
     elif "cambiar tono" in query_lower:
         st.session_state.formal_tone = not st.session_state.formal_tone
         return f"Tono cambiado a {'formal' if st.session_state.formal_tone else 'informal'}."
+    
+    # Respuesta predeterminada si Groq no está disponible
+    if not st.session_state.groq_available:
+        return "Lo siento, no puedo procesar consultas complejas en este momento. ¿Puedo ayudarte con el menú, entregas o realizar un pedido?"
     
     # Usar Groq para respuestas más complejas
     try:
