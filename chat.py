@@ -1,35 +1,26 @@
 import streamlit as st
+from groq import Groq
 import csv
-from datetime import datetime
-import random
 
 # Configuración de la página
-st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="centered")
+st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="wide")
 
 # Inicialización de variables de estado
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
 if 'menu' not in st.session_state:
     st.session_state.menu = {}
 if 'delivery_cities' not in st.session_state:
     st.session_state.delivery_cities = []
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
-if 'groq_available' not in st.session_state:
-    st.session_state.groq_available = False
 
 # Configuración de Groq
 try:
-    from groq import Groq
-    
-    # Intenta obtener la API key de las variables de entorno de Streamlit
-    groq_api_key = st.secrets["GROQ_API_KEY"]
-    
-    if groq_api_key:
-        client = Groq(api_key=groq_api_key)
-        st.session_state.groq_available = True
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    print(f"Error al configurar Groq: {e}")
+    st.error(f"Error al configurar Groq: {e}")
+    st.stop()
 
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
@@ -59,7 +50,7 @@ def get_menu():
     
     menu_text = "🍽️ Aquí está nuestro menú:\n\n"
     for category, items in st.session_state.menu.items():
-        menu_text += f"{category}:\n"
+        menu_text += f"**{category}**\n"
         for item in items:
             menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
         menu_text += "\n"
@@ -93,22 +84,7 @@ def get_bot_response(query):
     elif "especial" in query_lower:
         return "🌟 El especial de hoy es: Risotto de setas silvestres con trufa negra por $18.99"
     else:
-        if st.session_state.groq_available:
-            try:
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": "Eres un asistente de restaurante amable y servicial."},
-                        {"role": "user", "content": query}
-                    ],
-                    model="mixtral-8x7b-32768",
-                    max_tokens=500
-                )
-                return chat_completion.choices[0].message.content
-            except Exception as e:
-                print(f"Error al usar Groq: {e}")
-                return "Lo siento, no pude procesar tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
-        else:
-            return "Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
+        return None  # Indica que se debe usar Groq para generar una respuesta
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
@@ -118,25 +94,45 @@ def main():
     
     st.write("Bienvenido a nuestro restaurante virtual. ¿En qué puedo ayudarte hoy?")
     
-    # Mostrar el historial del chat
-    for message in st.session_state.chat_history:
-        if message[0] == "Usuario":
-            st.text_input("Tú:", value=message[1], key=f"user_{len(st.session_state.chat_history)}", disabled=True)
-        else:
-            st.text_area("Chatbot:", value=message[1], key=f"bot_{len(st.session_state.chat_history)}", disabled=True)
+    # Mostrar mensajes anteriores
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
     
-    # Campo de entrada para el usuario
-    user_message = st.text_input("Escribe tu mensaje aquí:", key="user_input")
-    
-    if st.button("Enviar"):
-        if user_message:
-            st.session_state.chat_history.append(("Usuario", user_message))
+    # Área de entrada del usuario
+    if prompt := st.chat_input("Escribe tu mensaje aquí:"):
+        # Agregar mensaje del usuario al historial
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Mostrar el mensaje del usuario
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generar respuesta del chatbot
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = get_bot_response(prompt)
             
-            bot_response = get_bot_response(user_message)
-            st.session_state.chat_history.append(("Chatbot", bot_response))
-            
-            # Limpiar el campo de entrada
-            st.experimental_rerun()
+            if full_response is None:
+                # Usar Groq para generar una respuesta
+                full_response = ""
+                for response in client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model="mixtral-8x7b-32768",
+                    stream=True,
+                ):
+                    full_response += (response.choices[0].delta.content or "")
+                    message_placeholder.markdown(full_response + "▌")
+                message_placeholder.markdown(full_response)
+            else:
+                # Usar la respuesta predefinida
+                message_placeholder.markdown(full_response)
+        
+        # Agregar respuesta del chatbot al historial
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 if __name__ == "__main__":
     main()
