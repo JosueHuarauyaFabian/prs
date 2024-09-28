@@ -1,5 +1,4 @@
 import streamlit as st
-from groq import Groq
 import csv
 
 # Configuración de la página
@@ -14,13 +13,18 @@ if 'delivery_cities' not in st.session_state:
     st.session_state.delivery_cities = []
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
+if 'groq_available' not in st.session_state:
+    st.session_state.groq_available = False
 
-# Configuración de Groq
+# Intentar configurar Groq si la clave API está disponible
 try:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    from groq import Groq
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
+    if groq_api_key:
+        client = Groq(api_key=groq_api_key)
+        st.session_state.groq_available = True
 except Exception as e:
-    st.error(f"Error al configurar Groq: {e}")
-    st.stop()
+    print(f"Groq no está disponible: {e}")
 
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
@@ -84,7 +88,7 @@ def get_bot_response(query):
     elif "especial" in query_lower:
         return "🌟 El especial de hoy es: Risotto de setas silvestres con trufa negra por $18.99"
     else:
-        return None  # Indica que se debe usar Groq para generar una respuesta
+        return "Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
@@ -113,20 +117,24 @@ def main():
             message_placeholder = st.empty()
             full_response = get_bot_response(prompt)
             
-            if full_response is None:
-                # Usar Groq para generar una respuesta
-                full_response = ""
-                for response in client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model="mixtral-8x7b-32768",
-                    stream=True,
-                ):
-                    full_response += (response.choices[0].delta.content or "")
-                    message_placeholder.markdown(full_response + "▌")
-                message_placeholder.markdown(full_response)
+            if st.session_state.groq_available and full_response.startswith("Lo siento, no entendí"):
+                # Usar Groq para generar una respuesta más personalizada
+                try:
+                    full_response = ""
+                    for response in client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        model="mixtral-8x7b-32768",
+                        stream=True,
+                    ):
+                        full_response += (response.choices[0].delta.content or "")
+                        message_placeholder.markdown(full_response + "▌")
+                    message_placeholder.markdown(full_response)
+                except Exception as e:
+                    print(f"Error al usar Groq: {e}")
+                    message_placeholder.markdown(full_response)
             else:
                 # Usar la respuesta predefinida
                 message_placeholder.markdown(full_response)
