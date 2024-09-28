@@ -1,9 +1,10 @@
 import streamlit as st
 import csv
 from groq import Groq
+import re
 
 # Configuración de la página
-st.set_page_config(page_title="Chatbot de Restaurante Avanzado", page_icon="🍽️", layout="wide")
+st.set_page_config(page_title="Chatbot de Restaurante Moderado", page_icon="🍽️", layout="wide")
 
 # Inicialización de variables de estado
 if 'messages' not in st.session_state:
@@ -48,6 +49,20 @@ def load_data():
         st.error("Error: Archivos de datos no encontrados.")
         return False
 
+def moderate_content(text):
+    """Modera el contenido para filtrar lenguaje inapropiado."""
+    # Lista de palabras inapropiadas (esto es solo un ejemplo, deberías expandirla)
+    inappropriate_words = ['palabrota1', 'palabrota2', 'insulto1', 'insulto2']
+    
+    # Convertir el texto a minúsculas para la comparación
+    text_lower = text.lower()
+    
+    # Verificar si alguna palabra inapropiada está en el texto
+    if any(word in text_lower for word in inappropriate_words):
+        return False, "Lo siento, tu mensaje contiene lenguaje inapropiado. Por favor, reformula tu pregunta de manera respetuosa."
+    
+    return True, text
+
 def get_menu(category=None):
     """Devuelve el menú del restaurante de manera organizada."""
     if not st.session_state.menu:
@@ -81,7 +96,12 @@ def get_delivery_info(city=None):
 
 def get_bot_response(query):
     """Procesa la consulta del usuario y devuelve una respuesta."""
-    query_lower = query.lower()
+    # Primero, moderamos la consulta del usuario
+    is_appropriate, moderated_query = moderate_content(query)
+    if not is_appropriate:
+        return moderated_query
+
+    query_lower = moderated_query.lower()
     
     # Respuestas predefinidas para consultas comunes
     if any(word in query_lower for word in ["menú", "carta", "comida", "platos"]):
@@ -98,8 +118,8 @@ def get_bot_response(query):
     if st.session_state.groq_available:
         try:
             messages = [
-                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Tienes conocimiento sobre el menú, las entregas y los horarios del restaurante. Responde de manera concisa y directa."},
-                {"role": "user", "content": query}
+                {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Tienes conocimiento sobre el menú, las entregas y los horarios del restaurante. Responde de manera concisa y directa. Evita cualquier contenido inapropiado o ofensivo."},
+                {"role": "user", "content": moderated_query}
             ]
             response = client.chat.completions.create(
                 messages=messages,
@@ -107,14 +127,16 @@ def get_bot_response(query):
                 max_tokens=150,
                 temperature=0.7
             )
-            return response.choices[0].message.content
+            # Moderamos también la respuesta generada por Groq
+            is_appropriate, moderated_response = moderate_content(response.choices[0].message.content)
+            return moderated_response if is_appropriate else "Lo siento, no puedo proporcionar una respuesta apropiada a esa pregunta. ¿Puedo ayudarte con algo más relacionado con nuestro restaurante?"
         except Exception as e:
             print(f"Error al usar Groq: {e}")
     
     return "Lo siento, no pude entender tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
 
 def main():
-    st.title("🍽️ Chatbot de Restaurante Avanzado")
+    st.title("🍽️ Chatbot de Restaurante Moderado")
     
     if not st.session_state.initialized:
         load_data()
@@ -128,21 +150,28 @@ def main():
     
     # Área de entrada del usuario
     if prompt := st.chat_input("Escribe tu mensaje aquí:"):
-        # Agregar mensaje del usuario al historial
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Moderar el mensaje del usuario antes de procesarlo
+        is_appropriate, moderated_prompt = moderate_content(prompt)
         
-        # Mostrar el mensaje del usuario
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Generar respuesta del chatbot
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = get_bot_response(prompt)
-            message_placeholder.markdown(full_response)
-        
-        # Agregar respuesta del chatbot al historial
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        if is_appropriate:
+            # Agregar mensaje del usuario al historial
+            st.session_state.messages.append({"role": "user", "content": moderated_prompt})
+            
+            # Mostrar el mensaje del usuario
+            with st.chat_message("user"):
+                st.markdown(moderated_prompt)
+            
+            # Generar respuesta del chatbot
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = get_bot_response(moderated_prompt)
+                message_placeholder.markdown(full_response)
+            
+            # Agregar respuesta del chatbot al historial
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+        else:
+            # Mostrar mensaje de advertencia si el contenido es inapropiado
+            st.warning(moderated_prompt)
 
 if __name__ == "__main__":
     main()
