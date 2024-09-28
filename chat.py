@@ -1,6 +1,5 @@
 import streamlit as st
 import csv
-from groq import Groq
 
 # Configuración de la página
 st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="wide")
@@ -14,10 +13,18 @@ if 'delivery_cities' not in st.session_state:
     st.session_state.delivery_cities = set()
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
+if 'groq_available' not in st.session_state:
+    st.session_state.groq_available = False
 
-# Configuración de Groq
-groq_api_key = st.secrets["GROQ_API_KEY"]
-client = Groq(api_key=groq_api_key)
+# Intentar configurar Groq
+try:
+    from groq import Groq
+    groq_api_key = st.secrets.get("GROQ_API_KEY")
+    if groq_api_key:
+        client = Groq(api_key=groq_api_key)
+        st.session_state.groq_available = True
+except Exception as e:
+    print(f"Groq no está disponible: {e}")
 
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
@@ -93,21 +100,22 @@ def get_bot_response(query):
     elif "especial" in query_lower:
         return "🌟 El especial de hoy es: Risotto de setas silvestres con trufa negra por $18.99"
     else:
-        # Usar Groq para generar una respuesta más personalizada
-        try:
-            response = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
-                    {"role": "user", "content": query}
-                ],
-                model="mixtral-8x7b-32768",
-                max_tokens=150,
-                temperature=0.7
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"Error al usar Groq: {e}")
-            return "Lo siento, no pude procesar tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
+        if st.session_state.groq_available:
+            try:
+                response = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
+                        {"role": "user", "content": query}
+                    ],
+                    model="mixtral-8x7b-32768",
+                    max_tokens=150,
+                    temperature=0.7
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                print(f"Error al usar Groq: {e}")
+        
+        return "Lo siento, no pude entender tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
