@@ -1,5 +1,6 @@
 import streamlit as st
 import csv
+from groq import Groq
 
 # Configuración de la página
 st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="wide")
@@ -10,21 +11,13 @@ if 'messages' not in st.session_state:
 if 'menu' not in st.session_state:
     st.session_state.menu = {}
 if 'delivery_cities' not in st.session_state:
-    st.session_state.delivery_cities = []
+    st.session_state.delivery_cities = set()
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
-if 'groq_available' not in st.session_state:
-    st.session_state.groq_available = False
 
-# Intentar configurar Groq si la clave API está disponible
-try:
-    from groq import Groq
-    groq_api_key = st.secrets.get("GROQ_API_KEY")
-    if groq_api_key:
-        client = Groq(api_key=groq_api_key)
-        st.session_state.groq_available = True
-except Exception as e:
-    print(f"Groq no está disponible: {e}")
+# Configuración de Groq
+groq_api_key = st.secrets["GROQ_API_KEY"]
+client = Groq(api_key=groq_api_key)
 
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
@@ -39,7 +32,8 @@ def load_data():
         
         with open('us-cities.csv', 'r') as file:
             reader = csv.DictReader(file)
-            st.session_state.delivery_cities = [f"{row['City']}, {row['State short']}" for row in reader]
+            for row in reader:
+                st.session_state.delivery_cities.add(f"{row['City']}, {row['State short']}")
         
         st.session_state.initialized = True
         return True
@@ -48,32 +42,36 @@ def load_data():
         return False
 
 def get_menu():
-    """Devuelve el menú del restaurante."""
+    """Devuelve el menú del restaurante de manera organizada."""
     if not st.session_state.menu:
         return "Lo siento, el menú no está disponible en este momento."
     
-    menu_text = "🍽️ Aquí está nuestro menú:\n\n"
+    menu_text = "🍽️ Nuestro Menú:\n\n"
     for category, items in st.session_state.menu.items():
         menu_text += f"**{category}**\n"
-        for item in items:
+        for item in items[:5]:  # Muestra solo los primeros 5 elementos de cada categoría
             menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
-        menu_text += "\n"
+        menu_text += "...\n\n"
+    menu_text += "Para ver más detalles de una categoría específica, por favor pregúntame sobre ella."
     return menu_text
 
-def get_delivery_info(query):
-    """Devuelve información sobre las ciudades de entrega."""
-    if not st.session_state.delivery_cities:
-        return "Lo siento, la información de entrega no está disponible en este momento."
-    
-    query_lower = query.lower()
-    if "muestra" in query_lower or "lista" in query_lower:
-        return f"🚚 Realizamos entregas en las siguientes ciudades:\n{', '.join(st.session_state.delivery_cities[:20])}\n... y más."
-    
-    for city in st.session_state.delivery_cities:
-        if city.lower() in query_lower:
-            return f"✅ Sí, realizamos entregas en {city}."
-    
-    return "❓ No he podido encontrar esa ciudad en nuestra lista de entregas. ¿Quieres que te muestre algunas ciudades disponibles?"
+def get_category_menu(category):
+    """Devuelve los elementos de una categoría específica del menú."""
+    if category in st.session_state.menu:
+        menu_text = f"🍽️ Menú de {category}:\n\n"
+        for item in st.session_state.menu[category]:
+            menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
+        return menu_text
+    else:
+        return f"Lo siento, no encontré la categoría '{category}' en nuestro menú."
+
+def get_delivery_info(city):
+    """Verifica si se realiza entrega en una ciudad específica."""
+    city = city.title()  # Capitaliza la primera letra de cada palabra
+    for delivery_city in st.session_state.delivery_cities:
+        if city in delivery_city:
+            return f"✅ Sí, realizamos entregas en {delivery_city}."
+    return f"❌ Lo siento, no realizamos entregas en {city}. ¿Quieres que te muestre algunas ciudades cercanas donde sí entregamos?"
 
 def get_bot_response(query):
     """Procesa la consulta del usuario y devuelve una respuesta."""
@@ -81,14 +79,35 @@ def get_bot_response(query):
     
     if "menú" in query_lower or "carta" in query_lower:
         return get_menu()
+    elif any(category.lower() in query_lower for category in st.session_state.menu.keys()):
+        for category in st.session_state.menu.keys():
+            if category.lower() in query_lower:
+                return get_category_menu(category)
     elif "entrega" in query_lower or "reparto" in query_lower:
-        return get_delivery_info(query)
+        for city in st.session_state.delivery_cities:
+            if city.split(',')[0].lower() in query_lower:
+                return get_delivery_info(city.split(',')[0])
+        return "Por favor, especifica la ciudad para la que quieres consultar la entrega."
     elif "horario" in query_lower:
         return "🕒 Nuestro horario es:\nLunes a Viernes: 11:00 AM - 10:00 PM\nSábados y Domingos: 10:00 AM - 11:00 PM"
     elif "especial" in query_lower:
         return "🌟 El especial de hoy es: Risotto de setas silvestres con trufa negra por $18.99"
     else:
-        return "Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
+        # Usar Groq para generar una respuesta más personalizada
+        try:
+            response = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
+                    {"role": "user", "content": query}
+                ],
+                model="mixtral-8x7b-32768",
+                max_tokens=150,
+                temperature=0.7
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Error al usar Groq: {e}")
+            return "Lo siento, no pude procesar tu consulta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, horarios o especiales?"
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
@@ -116,28 +135,7 @@ def main():
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             full_response = get_bot_response(prompt)
-            
-            if st.session_state.groq_available and full_response.startswith("Lo siento, no entendí"):
-                # Usar Groq para generar una respuesta más personalizada
-                try:
-                    full_response = ""
-                    for response in client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y directa."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        model="mixtral-8x7b-32768",
-                        stream=True,
-                    ):
-                        full_response += (response.choices[0].delta.content or "")
-                        message_placeholder.markdown(full_response + "▌")
-                    message_placeholder.markdown(full_response)
-                except Exception as e:
-                    print(f"Error al usar Groq: {e}")
-                    message_placeholder.markdown(full_response)
-            else:
-                # Usar la respuesta predefinida
-                message_placeholder.markdown(full_response)
+            message_placeholder.markdown(full_response)
         
         # Agregar respuesta del chatbot al historial
         st.session_state.messages.append({"role": "assistant", "content": full_response})
