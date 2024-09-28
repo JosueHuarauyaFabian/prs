@@ -13,45 +13,46 @@ if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'menu' not in st.session_state:
     st.session_state.menu = {}
-if 'delivery_districts' not in st.session_state:
-    st.session_state.delivery_districts = set()
+if 'delivery_cities' not in st.session_state:
+    st.session_state.delivery_cities = []
 if 'current_order' not in st.session_state:
     st.session_state.current_order = []
-if 'formal_tone' not in st.session_state:
-    st.session_state.formal_tone = True
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
-if 'groq_available' not in st.session_state:
-    st.session_state.groq_available = False
-
-# Intentar configurar Groq
-try:
-    from groq import Groq
-    groq_api_key = st.secrets.get("GROQ_API_KEY")
-    if groq_api_key:
-        client = Groq(api_key=groq_api_key)
-        st.session_state.groq_available = True
-except Exception as e:
-    print(f"Groq no está disponible: {e}")
 
 def load_data():
-    """Carga los datos del menú y los distritos de reparto."""
+    """Carga los datos del menú y las ciudades de entrega."""
     try:
+        # Cargar el menú
         with open('menu.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
+            reader = csv.reader(file)
+            headers = next(reader)  # Leer los encabezados
             for row in reader:
-                category = row['Category']
+                category = row[0]
+                item = row[1]
+                serving_size = row[2]
                 if category not in st.session_state.menu:
                     st.session_state.menu[category] = []
-                st.session_state.menu[category].append(row)
-        
-        with open('delivery_districts.txt', 'r', encoding='utf-8') as file:
-            st.session_state.delivery_districts = set(file.read().splitlines())
-        
+                st.session_state.menu[category].append({
+                    'Item': item,
+                    'Serving Size': serving_size
+                })
+
+        # Cargar las ciudades de entrega
+        with open('us-cities.csv', 'r', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Saltar la primera línea (2)
+            for row in reader:
+                if len(row) >= 2:
+                    st.session_state.delivery_cities.append(f"{row[0]}, {row[1]}")
+
         st.session_state.initialized = True
         return True
     except FileNotFoundError:
         st.error("Error: Archivos de datos no encontrados.")
+        return False
+    except Exception as e:
+        st.error(f"Error al cargar los datos: {e}")
         return False
 
 def get_menu(category=None):
@@ -62,25 +63,30 @@ def get_menu(category=None):
     if category and category in st.session_state.menu:
         menu_text = f"🍽️ Menú de {category}:\n\n"
         for item in st.session_state.menu[category]:
-            menu_text += f"• {item['Item']} - ${item['Price']}\n"
+            menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
     else:
         menu_text = "🍽️ Nuestro Menú:\n\n"
         for category, items in st.session_state.menu.items():
             menu_text += f"**{category}**\n"
             for item in items[:5]:
-                menu_text += f"• {item['Item']} - ${item['Price']}\n"
-            menu_text += "...\n\n"
+                menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
+            if len(items) > 5:
+                menu_text += "...\n"
+            menu_text += "\n"
         menu_text += "Para ver más detalles de una categoría específica, por favor pregúntame sobre ella."
     return menu_text
 
-def get_delivery_info(district=None):
-    """Verifica si se realiza entrega en un distrito específico o muestra información general."""
-    if not district:
-        return f"Realizamos entregas en los siguientes distritos: {', '.join(st.session_state.delivery_districts)}. Por favor, pregunta por un distrito específico."
+def get_delivery_info(city=None):
+    """Verifica si se realiza entrega en una ciudad específica o muestra información general."""
+    if not city:
+        sample_cities = st.session_state.delivery_cities[:5]
+        return f"Realizamos entregas en varias ciudades, incluyendo: {', '.join(sample_cities)}... y más. Por favor, pregunta por una ciudad específica."
     
-    if district.lower() in [d.lower() for d in st.session_state.delivery_districts]:
-        return f"✅ Sí, realizamos entregas en {district}."
-    return f"❌ Lo siento, no realizamos entregas en {district}. Los distritos disponibles son: {', '.join(st.session_state.delivery_districts)}."
+    city = city.title()  # Capitaliza la primera letra de cada palabra
+    for delivery_city in st.session_state.delivery_cities:
+        if city in delivery_city:
+            return f"✅ Sí, realizamos entregas en {delivery_city}."
+    return f"❌ Lo siento, no realizamos entregas en {city}. ¿Quieres que te muestre algunas ciudades donde sí entregamos?"
 
 def add_to_order(item, quantity):
     """Añade un ítem al pedido actual."""
@@ -90,9 +96,9 @@ def add_to_order(item, quantity):
                 st.session_state.current_order.append({
                     'item': menu_item['Item'],
                     'quantity': quantity,
-                    'price': float(menu_item['Price'])
+                    'serving_size': menu_item['Serving Size']
                 })
-                return f"Añadido al pedido: {quantity} x {menu_item['Item']}"
+                return f"Añadido al pedido: {quantity} x {menu_item['Item']} ({menu_item['Serving Size']})"
     return f"Lo siento, no pude encontrar '{item}' en nuestro menú."
 
 def finalize_order():
@@ -100,13 +106,15 @@ def finalize_order():
     if not st.session_state.current_order:
         return "No hay ítems en tu pedido actual."
     
-    total = sum(item['quantity'] * item['price'] for item in st.session_state.current_order)
+    order_summary = "Resumen del pedido:\n"
+    for item in st.session_state.current_order:
+        order_summary += f"• {item['quantity']} x {item['item']} ({item['serving_size']})\n"
+    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     order_details = {
         'timestamp': timestamp,
-        'items': st.session_state.current_order,
-        'total': total
+        'items': st.session_state.current_order
     }
     
     # Registrar el pedido en un archivo JSON
@@ -121,25 +129,7 @@ def finalize_order():
         json.dump(orders, f, indent=4)
     
     st.session_state.current_order = []
-    return f"Pedido finalizado. Total: ${total:.2f}. Gracias por tu compra!"
-
-def verify_response(response):
-    """Verifica que la respuesta sea precisa antes de retornarla al usuario."""
-    if len(response) < 10:
-        return False, "La respuesta es demasiado corta. Por favor, elabora más."
-    if len(response) > 500:
-        return False, "La respuesta es demasiado larga. Por favor, sé más conciso."
-    return True, response
-
-def adjust_tone(response, formal=True):
-    """Ajusta el tono de la respuesta según la preferencia del usuario."""
-    if formal:
-        response = response.replace("Hola", "Saludos")
-        response = response.replace("Chao", "Hasta luego")
-    else:
-        response = response.replace("Saludos", "Hola")
-        response = response.replace("Hasta luego", "Chao")
-    return response
+    return f"{order_summary}\nPedido registrado con éxito a las {timestamp}. ¡Gracias por tu compra!"
 
 def get_bot_response(query):
     """Procesa la consulta del usuario y devuelve una respuesta."""
@@ -147,10 +137,14 @@ def get_bot_response(query):
     
     if "menú" in query_lower or "carta" in query_lower:
         return get_menu()
+    elif any(category.lower() in query_lower for category in st.session_state.menu.keys()):
+        for category in st.session_state.menu.keys():
+            if category.lower() in query_lower:
+                return get_menu(category)
     elif "entrega" in query_lower or "reparto" in query_lower:
-        for district in st.session_state.delivery_districts:
-            if district.lower() in query_lower:
-                return get_delivery_info(district)
+        for city in st.session_state.delivery_cities:
+            if city.split(',')[0].lower() in query_lower:
+                return get_delivery_info(city.split(',')[0])
         return get_delivery_info()
     elif "pedir" in query_lower or "ordenar" in query_lower:
         items = re.findall(r'(\d+)\s*x\s*(.+?)(?=\d+\s*x|\s*y\s*|\s*,|$)', query_lower)
@@ -160,37 +154,15 @@ def get_bot_response(query):
                 responses.append(add_to_order(item.strip(), int(quantity)))
             return "\n".join(responses)
         else:
-            return "No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x pizza margherita'."
+            return "No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x hamburguesa'."
     elif "finalizar pedido" in query_lower:
         return finalize_order()
-    elif "cambiar tono" in query_lower:
-        st.session_state.formal_tone = not st.session_state.formal_tone
-        return f"Tono cambiado a {'formal' if st.session_state.formal_tone else 'informal'}."
-    
-    # Respuesta predeterminada si Groq no está disponible
-    if not st.session_state.groq_available:
-        return "Lo siento, no puedo procesar consultas complejas en este momento. ¿Puedo ayudarte con el menú, entregas o realizar un pedido?"
-    
-    # Usar Groq para respuestas más complejas
-    try:
-        messages = [
-            {"role": "system", "content": "Eres un asistente de restaurante amable y servicial. Responde de manera concisa y precisa."},
-            {"role": "user", "content": query}
-        ]
-        response = client.chat.completions.create(
-            messages=messages,
-            model="mixtral-8x7b-32768",
-            max_tokens=150,
-            temperature=0.7
-        )
-        is_valid, verified_response = verify_response(response.choices[0].message.content)
-        if is_valid:
-            return adjust_tone(verified_response, st.session_state.formal_tone)
-        else:
-            return verified_response
-    except Exception as e:
-        print(f"Error al usar Groq: {e}")
-        return "Lo siento, no pude procesar tu consulta. ¿Puedo ayudarte con el menú, entregas o realizar un pedido?"
+    elif "horario" in query_lower:
+        return "🕒 Nuestro horario es:\nLunes a Viernes: 11:00 AM - 10:00 PM\nSábados y Domingos: 10:00 AM - 11:00 PM"
+    elif "especial" in query_lower:
+        return "🌟 El especial de hoy es: Hamburguesa gourmet con papas fritas"
+    else:
+        return "Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, realizar un pedido o nuestro horario?"
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
