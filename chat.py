@@ -28,32 +28,40 @@ def load_data():
     try:
         # Cargar el menú
         with open('menu.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
+            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador tabulación
             for row in reader:
-                category = row['Category']
-                item = row['Item']
-                serving_size = row['Serving Size']
-                price = float(row['Price'])
-                if category not in st.session_state.menu:
-                    st.session_state.menu[category] = []
-                st.session_state.menu[category].append({
-                    'Item': item,
-                    'Serving Size': serving_size,
-                    'Price': price
-                })
+                try:
+                    category = row['Category']
+                    item = row['Item']
+                    serving_size = row['Serving Size']
+                    price_str = row['Price'].strip()
+                    price = float(price_str)
+                    if category not in st.session_state.menu:
+                        st.session_state.menu[category] = []
+                    st.session_state.menu[category].append({
+                        'Item': item,
+                        'Serving Size': serving_size,
+                        'Price': price
+                    })
+                except ValueError:
+                    st.warning(f"Precio inválido para el ítem '{row.get('Item', 'Desconocido')}'. Se omitirá este ítem.")
+                except KeyError as e:
+                    st.error(f"Falta la columna {e} en el archivo menu.csv.")
+                    return False
 
         # Cargar las ciudades de entrega
         with open('us-cities.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file)
+            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador tabulación
             for row in reader:
-                city = row['City']
-                state = row['State short']
-                st.session_state.delivery_cities.append(f"{city}, {state}")
+                city = row.get('City')
+                state = row.get('State short')
+                if city and state:
+                    st.session_state.delivery_cities.append(f"{city}, {state}")
 
         st.session_state.initialized = True
         return True
     except FileNotFoundError:
-        st.error("Error: Archivos de datos no encontrados.")
+        st.error("Error: Archivos de datos no encontrados. Asegúrate de que 'menu.csv' y 'us-cities.csv' estén en el directorio correcto.")
         return False
     except Exception as e:
         st.error(f"Error al cargar los datos: {e}")
@@ -63,7 +71,7 @@ def get_menu(category=None):
     """Devuelve el menú del restaurante de manera organizada."""
     if not st.session_state.menu:
         return "Lo siento, el menú no está disponible en este momento."
-    
+
     if category and category in st.session_state.menu:
         menu_text = f"🍽️ **Menú de {category}:**\n\n"
         for item in st.session_state.menu[category]:
@@ -83,7 +91,7 @@ def get_delivery_info(city=None):
     if not city:
         sample_cities = st.session_state.delivery_cities[:5]
         return f"Realizamos entregas en varias ciudades, incluyendo: {', '.join(sample_cities)}... y más. Por favor, pregunta por una ciudad específica."
-    
+
     city = city.title()  # Capitaliza la primera letra de cada palabra
     for delivery_city in st.session_state.delivery_cities:
         if city in delivery_city:
@@ -129,26 +137,26 @@ def finalize_order():
     """Finaliza el pedido actual y lo registra."""
     if not st.session_state.current_order:
         return "No hay ítems en tu pedido actual."
-    
+
     order_summary = "📝 **Resumen del pedido:**\n"
     for item in st.session_state.current_order:
         order_summary += f"• {item['quantity']} x **{item['item']}** ({item['serving_size']}) - **${item['price']:.2f}** cada uno\n"
     total = calculate_total()
     order_summary += f"\n**Total:** ${total:.2f}\n"
-    
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     order_details = {
         'timestamp': timestamp,
         'items': st.session_state.current_order,
         'total': total
     }
-    
+
     # Registrar el pedido en un archivo JSON
     if not os.path.exists('orders.json'):
         with open('orders.json', 'w', encoding='utf-8') as f:
             json.dump([], f, ensure_ascii=False, indent=4)
-    
+
     with open('orders.json', 'r+', encoding='utf-8') as f:
         try:
             orders = json.load(f)
@@ -157,7 +165,7 @@ def finalize_order():
         orders.append(order_details)
         f.seek(0)
         json.dump(orders, f, ensure_ascii=False, indent=4)
-    
+
     st.session_state.current_order = []
     return f"{order_summary}\n✅ **Pedido registrado con éxito a las {timestamp}. ¡Gracias por tu compra!**"
 
@@ -176,7 +184,7 @@ def get_bot_response(query):
             return "⚠️ Lo siento, no puedo procesar comentarios inapropiados. Por favor, mantén la conversación respetuosa."
 
     query_lower = query.lower()
-    
+
     if "menú" in query_lower or "carta" in query_lower:
         return get_menu()
     elif any(category.lower() in query_lower for category in st.session_state.menu.keys()):
@@ -190,7 +198,7 @@ def get_bot_response(query):
         return get_delivery_info()
     elif "pedir" in query_lower or "ordenar" in query_lower:
         # Ejemplos de patrones: '2 x hamburguesa', '1x pizza', '3 x ensalada'
-        items = re.findall(r'(\d+)\s*x\s*([\w\s]+)', query_lower)
+        items = re.findall(r'(\d+)\s*x\s*([\w\s&]+)', query_lower)
         if items:
             responses = []
             for quantity, item in items:
@@ -202,7 +210,7 @@ def get_bot_response(query):
             return "❓ No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x hamburguesa'."
     elif "quitar" in query_lower or "remover" in query_lower:
         # Ejemplos de patrones: 'quitar hamburguesa', 'remover 1 x pizza'
-        items = re.findall(r'(quitar|remover)\s+(\d+)?\s*x?\s*([\w\s]+)', query_lower)
+        items = re.findall(r'(quitar|remover)\s+(\d+)?\s*x?\s*([\w\s&]+)', query_lower)
         if items:
             responses = []
             for action, quantity, item in items:
@@ -237,28 +245,28 @@ def get_bot_response(query):
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
-    
+
     if not st.session_state.initialized:
         load_data()
-    
+
     st.write("👋 Bienvenido a nuestro restaurante virtual. ¿En qué puedo ayudarte hoy?")
-    
+
     # Mostrar mensajes anteriores
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    
+
     # Área de entrada del usuario
     if prompt := st.chat_input("Escribe tu mensaje aquí:"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-        
+
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             full_response = get_bot_response(prompt)
             message_placeholder.markdown(full_response)
-        
+
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 if __name__ == "__main__":
