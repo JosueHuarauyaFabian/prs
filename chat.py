@@ -20,31 +20,35 @@ if 'current_order' not in st.session_state:
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
 
+# Lista básica de palabras inapropiadas
+INAPPROPRIATE_WORDS = ['malasPalabras1', 'malasPalabras2', 'malasPalabras3']  # Añade las palabras que desees filtrar
+
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
     try:
         # Cargar el menú
         with open('menu.csv', 'r', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            headers = next(reader)  # Leer los encabezados
+            reader = csv.DictReader(file)
             for row in reader:
-                category = row[0]
-                item = row[1]
-                serving_size = row[2]
+                category = row['Category']
+                item = row['Item']
+                serving_size = row['Serving Size']
+                price = float(row['Price'])
                 if category not in st.session_state.menu:
                     st.session_state.menu[category] = []
                 st.session_state.menu[category].append({
                     'Item': item,
-                    'Serving Size': serving_size
+                    'Serving Size': serving_size,
+                    'Price': price
                 })
 
         # Cargar las ciudades de entrega
         with open('us-cities.csv', 'r', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            next(reader)  # Saltar la primera línea (2)
+            reader = csv.DictReader(file)
             for row in reader:
-                if len(row) >= 2:
-                    st.session_state.delivery_cities.append(f"{row[0]}, {row[1]}")
+                city = row['City']
+                state = row['State short']
+                st.session_state.delivery_cities.append(f"{city}, {state}")
 
         st.session_state.initialized = True
         return True
@@ -61,17 +65,15 @@ def get_menu(category=None):
         return "Lo siento, el menú no está disponible en este momento."
     
     if category and category in st.session_state.menu:
-        menu_text = f"🍽️ Menú de {category}:\n\n"
+        menu_text = f"🍽️ **Menú de {category}:**\n\n"
         for item in st.session_state.menu[category]:
-            menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
+            menu_text += f"• **{item['Item']}** - {item['Serving Size']} - **${item['Price']:.2f}**\n"
     else:
-        menu_text = "🍽️ Nuestro Menú:\n\n"
+        menu_text = "🍽️ **Nuestro Menú:**\n\n"
         for category, items in st.session_state.menu.items():
-            menu_text += f"**{category}**\n"
-            for item in items[:5]:
-                menu_text += f"• {item['Item']} - {item['Serving Size']}\n"
-            if len(items) > 5:
-                menu_text += "...\n"
+            menu_text += f"### {category}\n"
+            for item in items:
+                menu_text += f"• **{item['Item']}** - {item['Serving Size']} - **${item['Price']:.2f}**\n"
             menu_text += "\n"
         menu_text += "Para ver más detalles de una categoría específica, por favor pregúntame sobre ella."
     return menu_text
@@ -96,43 +98,83 @@ def add_to_order(item, quantity):
                 st.session_state.current_order.append({
                     'item': menu_item['Item'],
                     'quantity': quantity,
-                    'serving_size': menu_item['Serving Size']
+                    'serving_size': menu_item['Serving Size'],
+                    'price': menu_item['Price']
                 })
-                return f"Añadido al pedido: {quantity} x {menu_item['Item']} ({menu_item['Serving Size']})"
+                return f"Añadido al pedido: {quantity} x **{menu_item['Item']}** ({menu_item['Serving Size']}) - **${menu_item['Price']:.2f}** cada uno."
     return f"Lo siento, no pude encontrar '{item}' en nuestro menú."
+
+def remove_from_order(item, quantity=None):
+    """Remueve un ítem del pedido actual."""
+    removed = False
+    for order_item in st.session_state.current_order:
+        if order_item['item'].lower() == item.lower():
+            if quantity is None or order_item['quantity'] <= quantity:
+                st.session_state.current_order.remove(order_item)
+                removed = True
+                return f"Removido del pedido: **{order_item['item']}**."
+            else:
+                order_item['quantity'] -= quantity
+                removed = True
+                return f"Removido del pedido: {quantity} x **{order_item['item']}**."
+    if not removed:
+        return f"No se encontró '{item}' en tu pedido."
+
+def calculate_total():
+    """Calcula el precio total del pedido actual."""
+    total = sum(item['price'] * item['quantity'] for item in st.session_state.current_order)
+    return total
 
 def finalize_order():
     """Finaliza el pedido actual y lo registra."""
     if not st.session_state.current_order:
         return "No hay ítems en tu pedido actual."
     
-    order_summary = "Resumen del pedido:\n"
+    order_summary = "📝 **Resumen del pedido:**\n"
     for item in st.session_state.current_order:
-        order_summary += f"• {item['quantity']} x {item['item']} ({item['serving_size']})\n"
+        order_summary += f"• {item['quantity']} x **{item['item']}** ({item['serving_size']}) - **${item['price']:.2f}** cada uno\n"
+    total = calculate_total()
+    order_summary += f"\n**Total:** ${total:.2f}\n"
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     order_details = {
         'timestamp': timestamp,
-        'items': st.session_state.current_order
+        'items': st.session_state.current_order,
+        'total': total
     }
     
     # Registrar el pedido en un archivo JSON
     if not os.path.exists('orders.json'):
-        with open('orders.json', 'w') as f:
-            json.dump([], f)
+        with open('orders.json', 'w', encoding='utf-8') as f:
+            json.dump([], f, ensure_ascii=False, indent=4)
     
-    with open('orders.json', 'r+') as f:
-        orders = json.load(f)
+    with open('orders.json', 'r+', encoding='utf-8') as f:
+        try:
+            orders = json.load(f)
+        except json.JSONDecodeError:
+            orders = []
         orders.append(order_details)
         f.seek(0)
-        json.dump(orders, f, indent=4)
+        json.dump(orders, f, ensure_ascii=False, indent=4)
     
     st.session_state.current_order = []
-    return f"{order_summary}\nPedido registrado con éxito a las {timestamp}. ¡Gracias por tu compra!"
+    return f"{order_summary}\n✅ **Pedido registrado con éxito a las {timestamp}. ¡Gracias por tu compra!**"
+
+def cancel_order():
+    """Cancela el pedido actual."""
+    if not st.session_state.current_order:
+        return "No hay ningún pedido para cancelar."
+    st.session_state.current_order = []
+    return "🛑 Tu pedido ha sido cancelado."
 
 def get_bot_response(query):
     """Procesa la consulta del usuario y devuelve una respuesta."""
+    # Filtrar comentarios inapropiados
+    for word in INAPPROPRIATE_WORDS:
+        if re.search(rf'\b{word}\b', query, re.IGNORECASE):
+            return "⚠️ Lo siento, no puedo procesar comentarios inapropiados. Por favor, mantén la conversación respetuosa."
+
     query_lower = query.lower()
     
     if "menú" in query_lower or "carta" in query_lower:
@@ -147,22 +189,51 @@ def get_bot_response(query):
                 return get_delivery_info(city.split(',')[0])
         return get_delivery_info()
     elif "pedir" in query_lower or "ordenar" in query_lower:
-        items = re.findall(r'(\d+)\s*x\s*(.+?)(?=\d+\s*x|\s*y\s*|\s*,|$)', query_lower)
+        # Ejemplos de patrones: '2 x hamburguesa', '1x pizza', '3 x ensalada'
+        items = re.findall(r'(\d+)\s*x\s*([\w\s]+)', query_lower)
         if items:
             responses = []
             for quantity, item in items:
                 responses.append(add_to_order(item.strip(), int(quantity)))
+            total = calculate_total()
+            responses.append(f"**Total actual:** ${total:.2f}")
             return "\n".join(responses)
         else:
-            return "No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x hamburguesa'."
-    elif "finalizar pedido" in query_lower:
+            return "❓ No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x hamburguesa'."
+    elif "quitar" in query_lower or "remover" in query_lower:
+        # Ejemplos de patrones: 'quitar hamburguesa', 'remover 1 x pizza'
+        items = re.findall(r'(quitar|remover)\s+(\d+)?\s*x?\s*([\w\s]+)', query_lower)
+        if items:
+            responses = []
+            for action, quantity, item in items:
+                if quantity:
+                    responses.append(remove_from_order(item.strip(), int(quantity)))
+                else:
+                    responses.append(remove_from_order(item.strip()))
+            total = calculate_total()
+            responses.append(f"**Total actual:** ${total:.2f}")
+            return "\n".join(responses)
+        else:
+            return "❓ No pude entender qué quieres remover. Por favor, usa el formato: 'quitar 2 x hamburguesa'."
+    elif "finalizar pedido" in query_lower or "confirmar pedido" in query_lower:
         return finalize_order()
+    elif "cancelar pedido" in query_lower:
+        return cancel_order()
+    elif "ver pedido" in query_lower or "mostrar pedido" in query_lower:
+        if not st.session_state.current_order:
+            return "🛒 Tu pedido está vacío."
+        order_summary = "🛒 **Tu pedido actual:**\n"
+        for item in st.session_state.current_order:
+            order_summary += f"• {item['quantity']} x **{item['item']}** - **${item['price']:.2f}** cada uno\n"
+        total = calculate_total()
+        order_summary += f"\n**Total:** ${total:.2f}"
+        return order_summary
     elif "horario" in query_lower:
-        return "🕒 Nuestro horario es:\nLunes a Viernes: 11:00 AM - 10:00 PM\nSábados y Domingos: 10:00 AM - 11:00 PM"
+        return "🕒 **Nuestro horario es:**\nLunes a Viernes: 11:00 AM - 10:00 PM\nSábados y Domingos: 10:00 AM - 11:00 PM"
     elif "especial" in query_lower:
-        return "🌟 El especial de hoy es: Hamburguesa gourmet con papas fritas"
+        return "🌟 **El especial de hoy es:** Hamburguesa gourmet con papas fritas y bebida gratis."
     else:
-        return "Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, realizar un pedido o nuestro horario?"
+        return "🤔 Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, realizar un pedido, cancelar un pedido o nuestro horario?"
 
 def main():
     st.title("🍽️ Chatbot de Restaurante")
@@ -170,7 +241,7 @@ def main():
     if not st.session_state.initialized:
         load_data()
     
-    st.write("Bienvenido a nuestro restaurante virtual. ¿En qué puedo ayudarte hoy?")
+    st.write("👋 Bienvenido a nuestro restaurante virtual. ¿En qué puedo ayudarte hoy?")
     
     # Mostrar mensajes anteriores
     for message in st.session_state.messages:
