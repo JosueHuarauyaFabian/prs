@@ -21,21 +21,30 @@ if 'initialized' not in st.session_state:
     st.session_state.initialized = False
 
 # Lista básica de palabras inapropiadas
-INAPPROPRIATE_WORDS = ['malasPalabras1', 'malasPalabras2', 'malasPalabras3']  # Añade las palabras que desees filtrar
+INAPPROPRIATE_WORDS = ['palabra1', 'palabra2', 'palabra3']  # Actualiza con las palabras que desees filtrar
 
 def load_data():
     """Carga los datos del menú y las ciudades de entrega."""
     try:
         # Cargar el menú
         with open('menu.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador tabulación
-            for row in reader:
+            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador de tabulación
+            for row_number, row in enumerate(reader, start=2):  # Comenzar en 2 para considerar la cabecera
+                # Depuración: Mostrar las claves de la fila actual
+                st.write(f"Procesando fila {row_number}: Claves encontradas: {row.keys()}")
+                
+                # Verificar si 'Price' está presente
+                if 'Price' not in row:
+                    st.error(f"Error en la fila {row_number}: Falta la columna 'Price'.")
+                    continue  # Omitir esta fila
+                
                 try:
                     category = row['Category']
                     item = row['Item']
                     serving_size = row['Serving Size']
                     price_str = row['Price'].strip()
                     price = float(price_str)
+                    
                     if category not in st.session_state.menu:
                         st.session_state.menu[category] = []
                     st.session_state.menu[category].append({
@@ -44,19 +53,21 @@ def load_data():
                         'Price': price
                     })
                 except ValueError:
-                    st.warning(f"Precio inválido para el ítem '{row.get('Item', 'Desconocido')}'. Se omitirá este ítem.")
+                    st.warning(f"Precio inválido en la fila {row_number} para el ítem '{row.get('Item', 'Desconocido')}'. Se omitirá este ítem.")
                 except KeyError as e:
-                    st.error(f"Falta la columna {e} en el archivo menu.csv.")
+                    st.error(f"Error en la fila {row_number}: Falta la columna {e}.")
                     return False
 
         # Cargar las ciudades de entrega
         with open('us-cities.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador tabulación
-            for row in reader:
+            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador de tabulación
+            for row_number, row in enumerate(reader, start=2):
                 city = row.get('City')
                 state = row.get('State short')
                 if city and state:
                     st.session_state.delivery_cities.append(f"{city}, {state}")
+                else:
+                    st.warning(f"Fila {row_number} en 'us-cities.csv' está incompleta y será omitida.")
 
         st.session_state.initialized = True
         return True
