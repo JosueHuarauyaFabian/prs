@@ -3,6 +3,10 @@ import pandas as pd
 import re
 from openai import OpenAI
 import json
+import logging
+
+# Configuración de logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Configuración de la página
 st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️")
@@ -18,15 +22,19 @@ def load_data():
         cities_df = pd.read_csv('us-cities.csv')
         return menu_df, cities_df['City'].tolist()
     except Exception as e:
-        st.error(f"Error al cargar los datos: {e}")
+        logging.error(f"Error al cargar los datos: {e}")
         return pd.DataFrame(), []
 
 menu_df, delivery_cities = load_data()
 if menu_df.empty:
     st.error("No se pudo cargar el menú. Por favor, verifica el archivo menu.csv.")
+else:
+    logging.info(f"Menú cargado correctamente. Categorías: {', '.join(menu_df['Category'].unique())}")
+    logging.debug(f"Primeras filas del menú:\n{menu_df.head()}")
 
 # Funciones de manejo del menú
 def get_menu():
+    logging.debug("Función get_menu() llamada")
     if menu_df.empty:
         return "Lo siento, no pude cargar el menú. Por favor, contacta al soporte técnico."
     
@@ -40,6 +48,7 @@ def get_menu():
     return menu_text
 
 def get_category_details(category):
+    logging.debug(f"Detalles solicitados para la categoría: {category}")
     category_items = menu_df[menu_df['Category'] == category]
     if category_items.empty:
         return f"Lo siento, no encontré información sobre la categoría '{category}'."
@@ -67,10 +76,11 @@ def calculate_total():
         if not price.empty:
             total += price.iloc[0] * quantity
         else:
-            st.warning(f"No se encontró el precio para {item}. Por favor, verifica el menú.")
+            logging.warning(f"No se encontró el precio para {item}.")
     return total
 
 def add_to_order(item, quantity):
+    logging.debug(f"Añadiendo al pedido: {quantity} x {item}")
     item_lower = item.lower()
     menu_items_lower = [i.lower() for i in menu_df['Item']]
     if item_lower in menu_items_lower:
@@ -86,6 +96,7 @@ def add_to_order(item, quantity):
         return f"Lo siento, {item} no está en nuestro menú. Por favor, verifica el menú e intenta de nuevo."
 
 def remove_from_order(item):
+    logging.debug(f"Eliminando del pedido: {item}")
     item_lower = item.lower()
     for key in list(st.session_state.current_order.keys()):
         if key.lower() == item_lower:
@@ -95,6 +106,7 @@ def remove_from_order(item):
     return f"{item} no estaba en tu pedido."
 
 def modify_order(item, quantity):
+    logging.debug(f"Modificando pedido: {quantity} x {item}")
     item_lower = item.lower()
     for key in list(st.session_state.current_order.keys()):
         if key.lower() == item_lower:
@@ -163,26 +175,18 @@ def show_current_order():
 
 # Función de filtrado de contenido
 def is_inappropriate(text):
-    inappropriate_words = ['tonto', 'tonta']
+    inappropriate_words = ['tonto','tonta']
     return any(word in text.lower() for word in inappropriate_words)
 
 # Función de manejo de consultas
 def handle_query(query):
+    logging.debug(f"Consulta recibida: {query}")
     if is_inappropriate(query):
         return "Por favor, mantén un lenguaje respetuoso."
     
     query_lower = query.lower()
     
-    # Manejo de pedidos
-    order_match = re.findall(r'(\d+)\s*(.*?)(?=\d+\s*|$)', query_lower)
-    if order_match:
-        response = ""
-        for quantity, item in order_match:
-            item = item.strip()
-            response += add_to_order(item, int(quantity)) + "\n"
-        return response.strip()
-
-    if "menu" in query_lower or "carta" in query_lower:
+    if "menu" in query_lower or "carta" in query_lower or "menú" in query_lower:
         return get_menu()
     elif re.search(r'\b(entrega|reparto)\b', query_lower):
         city_match = re.search(r'en\s+(\w+)', query_lower)
@@ -220,6 +224,15 @@ def handle_query(query):
         else:
             return "No pude entender qué quieres modificar. Por favor, especifica la cantidad y el item."
     
+    # Manejo de pedidos
+    order_match = re.findall(r'(\d+)\s*(.*?)(?=\d+\s*|$)', query_lower)
+    if order_match:
+        response = ""
+        for quantity, item in order_match:
+            item = item.strip()
+            response += add_to_order(item, int(quantity)) + "\n"
+        return response.strip()
+    
     # Si no se reconoce la consulta, usamos OpenAI para generar una respuesta
     try:
         messages = st.session_state.messages + [{"role": "user", "content": query}]
@@ -234,7 +247,7 @@ def handle_query(query):
         )
         return response.choices[0].message.content
     except Exception as e:
-        st.error(f"Error generating response with OpenAI: {e}")
+        logging.error(f"Error generating response with OpenAI: {e}")
         return "Lo siento, no pude entender tu consulta. ¿Podrías reformularla?"
 
 # Título de la aplicación
