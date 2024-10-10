@@ -237,7 +237,7 @@ def handle_query(query):
     try:
         messages = st.session_state.messages + [{"role": "user", "content": query}]
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4-turbo",
             messages=[
                 {"role": m["role"], "content": m["content"]}
                 for m in messages
