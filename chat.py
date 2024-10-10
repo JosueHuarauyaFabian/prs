@@ -1,284 +1,211 @@
 import streamlit as st
-import csv
-import json
-from datetime import datetime
-import os
+import pandas as pd
 import re
-
+from openai import OpenAI
 # Configuración de la página
-st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️", layout="wide")
+st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️")
 
-# Inicialización de variables de estado
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-if 'menu' not in st.session_state:
-    st.session_state.menu = {}
-if 'delivery_cities' not in st.session_state:
-    st.session_state.delivery_cities = []
-if 'current_order' not in st.session_state:
-    st.session_state.current_order = []
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
 
-# Lista básica de palabras inapropiadas
-INAPPROPRIATE_WORDS = ['palabra1', 'palabra2', 'palabra3']  # Actualiza con las palabras que desees filtrar
 
+# Inicialización del cliente OPENAI
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+# Cargar datos
+@st.cache_data
 def load_data():
-    """Carga los datos del menú y las ciudades de entrega."""
-    try:
-        # Cargar el menú
-        with open('menu.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador de tabulación
-            for row_number, row in enumerate(reader, start=2):  # Comenzar en 2 para considerar la cabecera
-                # Depuración: Mostrar las claves de la fila actual
-                st.write(f"Procesando fila {row_number}: Claves encontradas: {row.keys()}")
-                
-                # Verificar si 'Price' está presente
-                if 'Price' not in row:
-                    st.error(f"Error en la fila {row_number}: Falta la columna 'Price'.")
-                    continue  # Omitir esta fila
-                
-                try:
-                    category = row['Category']
-                    item = row['Item']
-                    serving_size = row['Serving Size']
-                    price_str = row['Price'].strip()
-                    price = float(price_str)
-                    
-                    if category not in st.session_state.menu:
-                        st.session_state.menu[category] = []
-                    st.session_state.menu[category].append({
-                        'Item': item,
-                        'Serving Size': serving_size,
-                        'Price': price
-                    })
-                except ValueError:
-                    st.warning(f"Precio inválido en la fila {row_number} para el ítem '{row.get('Item', 'Desconocido')}'. Se omitirá este ítem.")
-                except KeyError as e:
-                    st.error(f"Error en la fila {row_number}: Falta la columna {e}.")
-                    return False
+    menu_df = pd.read_csv('menu.csv')
+    cities_df = pd.read_csv('us-cities.csv')
+    return menu_df, cities_df['City'].tolist()
 
-        # Cargar las ciudades de entrega
-        with open('us-cities.csv', 'r', encoding='utf-8') as file:
-            reader = csv.DictReader(file, delimiter='\t')  # Especificar el delimitador de tabulación
-            for row_number, row in enumerate(reader, start=2):
-                city = row.get('City')
-                state = row.get('State short')
-                if city and state:
-                    st.session_state.delivery_cities.append(f"{city}, {state}")
-                else:
-                    st.warning(f"Fila {row_number} en 'us-cities.csv' está incompleta y será omitida.")
+menu_df, delivery_cities = load_data()
 
-        st.session_state.initialized = True
-        return True
-    except FileNotFoundError:
-        st.error("Error: Archivos de datos no encontrados. Asegúrate de que 'menu.csv' y 'us-cities.csv' estén en el directorio correcto.")
-        return False
-    except Exception as e:
-        st.error(f"Error al cargar los datos: {e}")
-        return False
+# Simplificar el menú
+simplified_menu = menu_df[['Category', 'Item', 'Serving Size', 'Price']]
 
-def get_menu(category=None):
-    """Devuelve el menú del restaurante de manera organizada."""
-    if not st.session_state.menu:
-        return "Lo siento, el menú no está disponible en este momento."
-
-    if category and category in st.session_state.menu:
-        menu_text = f"🍽️ **Menú de {category}:**\n\n"
-        for item in st.session_state.menu[category]:
-            menu_text += f"• **{item['Item']}** - {item['Serving Size']} - **${item['Price']:.2f}**\n"
-    else:
-        menu_text = "🍽️ **Nuestro Menú:**\n\n"
-        for category, items in st.session_state.menu.items():
-            menu_text += f"### {category}\n"
-            for item in items:
-                menu_text += f"• **{item['Item']}** - {item['Serving Size']} - **${item['Price']:.2f}**\n"
-            menu_text += "\n"
-        menu_text += "Para ver más detalles de una categoría específica, por favor pregúntame sobre ella."
+# Funciones de manejo del menú
+def get_menu():
+    menu_text = "🍽️ Nuestro Menú:\n\n"
+    for category, items in simplified_menu.groupby('Category'):
+        menu_text += f"**{category}**\n"
+        for _, item in items.iterrows():
+            menu_text += f"• {item['Item']} - {item['Serving Size']} - ${item['Price']:.2f}\n"
+        menu_text += "\n"
+    menu_text += "Para ver más detalles de una categoría específica, por favor pregúntame sobre ella."
     return menu_text
 
-def get_delivery_info(city=None):
-    """Verifica si se realiza entrega en una ciudad específica o muestra información general."""
-    if not city:
-        sample_cities = st.session_state.delivery_cities[:5]
-        return f"Realizamos entregas en varias ciudades, incluyendo: {', '.join(sample_cities)}... y más. Por favor, pregunta por una ciudad específica."
+def get_category_details(category):
+    category_items = simplified_menu[simplified_menu['Category'] == category]
+    if category_items.empty:
+        return f"Lo siento, no encontré información sobre la categoría '{category}'."
+    
+    details = f"Detalles de {category}:\n\n"
+    for _, item in category_items.iterrows():
+        details += f"• {item['Item']} - {item['Serving Size']} - ${item['Price']:.2f}\n"
+    return details
 
-    city = city.title()  # Capitaliza la primera letra de cada palabra
-    for delivery_city in st.session_state.delivery_cities:
-        if city in delivery_city:
-            return f"✅ Sí, realizamos entregas en {delivery_city}."
-    return f"❌ Lo siento, no realizamos entregas en {city}. ¿Quieres que te muestre algunas ciudades donde sí entregamos?"
+# Funciones de manejo de entregas
+def check_delivery(city):
+    if city.lower() in [c.lower() for c in delivery_cities]:
+        return f"✅ Sí, realizamos entregas en {city}."
+    else:
+        return f"❌ Lo siento, actualmente no realizamos entregas en {city}."
 
+def get_delivery_cities():
+    return "Realizamos entregas en las siguientes ciudades:\n" + "\n".join(delivery_cities[:10]) + "\n..."
+
+# Funciones de manejo de pedidos
 def add_to_order(item, quantity):
-    """Añade un ítem al pedido actual."""
-    for category in st.session_state.menu.values():
-        for menu_item in category:
-            if menu_item['Item'].lower() == item.lower():
-                st.session_state.current_order.append({
-                    'item': menu_item['Item'],
-                    'quantity': quantity,
-                    'serving_size': menu_item['Serving Size'],
-                    'price': menu_item['Price']
-                })
-                return f"Añadido al pedido: {quantity} x **{menu_item['Item']}** ({menu_item['Serving Size']}) - **${menu_item['Price']:.2f}** cada uno."
-    return f"Lo siento, no pude encontrar '{item}' en nuestro menú."
+    if item in st.session_state.current_order:
+        st.session_state.current_order[item] += quantity
+    else:
+        st.session_state.current_order[item] = quantity
+    return f"Se ha añadido {quantity} {item}(s) a tu pedido."
 
-def remove_from_order(item, quantity=None):
-    """Remueve un ítem del pedido actual."""
-    removed = False
-    for order_item in st.session_state.current_order:
-        if order_item['item'].lower() == item.lower():
-            if quantity is None or order_item['quantity'] <= quantity:
-                st.session_state.current_order.remove(order_item)
-                removed = True
-                return f"Removido del pedido: **{order_item['item']}**."
-            else:
-                order_item['quantity'] -= quantity
-                removed = True
-                return f"Removido del pedido: {quantity} x **{order_item['item']}**."
-    if not removed:
-        return f"No se encontró '{item}' en tu pedido."
+def remove_from_order(item):
+    if item in st.session_state.current_order:
+        del st.session_state.current_order[item]
+        return f"Se ha eliminado {item} de tu pedido."
+    else:
+        return f"{item} no estaba en tu pedido."
 
 def calculate_total():
-    """Calcula el precio total del pedido actual."""
-    total = sum(item['price'] * item['quantity'] for item in st.session_state.current_order)
+    total = sum(menu_df.loc[menu_df['Item'] == item, 'Price'].iloc[0] * quantity 
+                for item, quantity in st.session_state.current_order.items())
     return total
 
-def finalize_order():
-    """Finaliza el pedido actual y lo registra."""
+def start_order():
+    return ("Para realizar un pedido, por favor sigue estos pasos:\n"
+            "1. Revisa nuestro menú\n"
+            "2. Dime qué items te gustaría ordenar\n"
+            "3. Proporciona tu dirección de entrega\n"
+            "4. Confirma tu pedido\n\n"
+            "¿Qué te gustaría ordenar?")
+
+def confirm_order():
     if not st.session_state.current_order:
-        return "No hay ítems en tu pedido actual."
-
-    order_summary = "📝 **Resumen del pedido:**\n"
-    for item in st.session_state.current_order:
-        order_summary += f"• {item['quantity']} x **{item['item']}** ({item['serving_size']}) - **${item['price']:.2f}** cada uno\n"
+        return "No hay ningún pedido para confirmar. ¿Quieres empezar uno nuevo?"
+    
+    order_df = pd.DataFrame(list(st.session_state.current_order.items()), columns=['Item', 'Quantity'])
+    order_df['Total'] = order_df.apply(lambda row: menu_df.loc[menu_df['Item'] == row['Item'], 'Price'].iloc[0] * row['Quantity'], axis=1)
+    order_df.to_csv('orders.csv', mode='a', header=False, index=False)
     total = calculate_total()
-    order_summary += f"\n**Total:** ${total:.2f}\n"
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    order_details = {
-        'timestamp': timestamp,
-        'items': st.session_state.current_order,
-        'total': total
-    }
-
-    # Registrar el pedido en un archivo JSON
-    if not os.path.exists('orders.json'):
-        with open('orders.json', 'w', encoding='utf-8') as f:
-            json.dump([], f, ensure_ascii=False, indent=4)
-
-    with open('orders.json', 'r+', encoding='utf-8') as f:
-        try:
-            orders = json.load(f)
-        except json.JSONDecodeError:
-            orders = []
-        orders.append(order_details)
-        f.seek(0)
-        json.dump(orders, f, ensure_ascii=False, indent=4)
-
-    st.session_state.current_order = []
-    return f"{order_summary}\n✅ **Pedido registrado con éxito a las {timestamp}. ¡Gracias por tu compra!**"
+    st.session_state.current_order = {}
+    return f"¡Gracias por tu pedido! Ha sido confirmado y guardado. El total es ${total:.2f}"
 
 def cancel_order():
-    """Cancela el pedido actual."""
     if not st.session_state.current_order:
         return "No hay ningún pedido para cancelar."
-    st.session_state.current_order = []
-    return "🛑 Tu pedido ha sido cancelado."
+    st.session_state.current_order = {}
+    return "Tu pedido ha sido cancelado."
 
-def get_bot_response(query):
-    """Procesa la consulta del usuario y devuelve una respuesta."""
-    # Filtrar comentarios inapropiados
-    for word in INAPPROPRIATE_WORDS:
-        if re.search(rf'\b{word}\b', query, re.IGNORECASE):
-            return "⚠️ Lo siento, no puedo procesar comentarios inapropiados. Por favor, mantén la conversación respetuosa."
+# Función de filtrado de contenido
+def is_inappropriate(text):
+    inappropriate_words = ['palabrota1', 'palabrota2', 'insulto1', 'insulto2']
+    return any(word in text.lower() for word in inappropriate_words)
 
+# Función de manejo de consultas
+def handle_query(query):
+    if is_inappropriate(query):
+        return "Por favor, mantén un lenguaje respetuoso."
+    
     query_lower = query.lower()
-
-    if "menú" in query_lower or "carta" in query_lower:
+    
+    if re.search(r'\b(menú|carta)\b', query_lower):
         return get_menu()
-    elif any(category.lower() in query_lower for category in st.session_state.menu.keys()):
-        for category in st.session_state.menu.keys():
-            if category.lower() in query_lower:
-                return get_menu(category)
-    elif "entrega" in query_lower or "reparto" in query_lower:
-        for city in st.session_state.delivery_cities:
-            if city.split(',')[0].lower() in query_lower:
-                return get_delivery_info(city.split(',')[0])
-        return get_delivery_info()
-    elif "pedir" in query_lower or "ordenar" in query_lower:
-        # Ejemplos de patrones: '2 x hamburguesa', '1x pizza', '3 x ensalada'
-        items = re.findall(r'(\d+)\s*x\s*([\w\s&]+)', query_lower)
-        if items:
-            responses = []
-            for quantity, item in items:
-                responses.append(add_to_order(item.strip(), int(quantity)))
-            total = calculate_total()
-            responses.append(f"**Total actual:** ${total:.2f}")
-            return "\n".join(responses)
+    elif re.search(r'\b(entrega|reparto)\b', query_lower):
+        city_match = re.search(r'en\s+(\w+)', query_lower)
+        if city_match:
+            return check_delivery(city_match.group(1))
         else:
-            return "❓ No pude entender tu pedido. Por favor, especifica la cantidad y el nombre del plato, por ejemplo: '2 x hamburguesa'."
-    elif "quitar" in query_lower or "remover" in query_lower:
-        # Ejemplos de patrones: 'quitar hamburguesa', 'remover 1 x pizza'
-        items = re.findall(r'(quitar|remover)\s+(\d+)?\s*x?\s*([\w\s&]+)', query_lower)
-        if items:
-            responses = []
-            for action, quantity, item in items:
-                if quantity:
-                    responses.append(remove_from_order(item.strip(), int(quantity)))
-                else:
-                    responses.append(remove_from_order(item.strip()))
-            total = calculate_total()
-            responses.append(f"**Total actual:** ${total:.2f}")
-            return "\n".join(responses)
-        else:
-            return "❓ No pude entender qué quieres remover. Por favor, usa el formato: 'quitar 2 x hamburguesa'."
-    elif "finalizar pedido" in query_lower or "confirmar pedido" in query_lower:
-        return finalize_order()
-    elif "cancelar pedido" in query_lower:
-        return cancel_order()
-    elif "ver pedido" in query_lower or "mostrar pedido" in query_lower:
-        if not st.session_state.current_order:
-            return "🛒 Tu pedido está vacío."
-        order_summary = "🛒 **Tu pedido actual:**\n"
-        for item in st.session_state.current_order:
-            order_summary += f"• {item['quantity']} x **{item['item']}** - **${item['price']:.2f}** cada uno\n"
-        total = calculate_total()
-        order_summary += f"\n**Total:** ${total:.2f}"
-        return order_summary
-    elif "horario" in query_lower:
-        return "🕒 **Nuestro horario es:**\nLunes a Viernes: 11:00 AM - 10:00 PM\nSábados y Domingos: 10:00 AM - 11:00 PM"
-    elif "especial" in query_lower:
-        return "🌟 **El especial de hoy es:** Hamburguesa gourmet con papas fritas y bebida gratis."
+            return get_delivery_cities()
+    elif re.search(r'\b(pedir|ordenar|pedido)\b', query_lower):
+        return start_order()
+    elif re.search(r'\b(categoría|categoria)\b', query_lower):
+        category_match = re.search(r'(categoría|categoria)\s+(\w+)', query_lower)
+        if category_match:
+            return get_category_details(category_match.group(2))
+    elif re.search(r'\b(precio|costo)\b', query_lower):
+        item_match = re.search(r'(precio|costo)\s+de\s+(.+)', query_lower)
+        if item_match:
+            item = item_match.group(2)
+            price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price']
+            if not price.empty:
+                return f"El precio de {item} es ${price.iloc[0]:.2f}"
+            else:
+                return f"Lo siento, no encontré el precio de {item}."
+    
+    # Si no se reconoce la consulta, usamos Groq para generar una respuesta
+    if groq_available:
+        messages = st.session_state.messages + [{"role": "user", "content": query}]
+        try:
+            response = client.chat.completions.create(
+                messages=[
+                    {"role": m["role"], "content": m["content"]}
+                    for m in messages
+                ],
+                model="mixtral-8x7b-32768",
+                max_tokens=150,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            st.error(f"Error generating response with Groq: {e}")
+            return "Lo siento, no pude entender tu consulta. ¿Podrías reformularla?"
     else:
-        return "🤔 Lo siento, no entendí tu pregunta. ¿Puedo ayudarte con información sobre nuestro menú, entregas, realizar un pedido, cancelar un pedido o nuestro horario?"
+        return "Lo siento, no pude entender tu consulta. ¿Podrías reformularla?"
 
-def main():
-    st.title("🍽️ Chatbot de Restaurante")
+# Título de la aplicación
+st.title("🍽️ Chatbot de Restaurante")
 
-    if not st.session_state.initialized:
-        load_data()
+# Inicialización del historial de chat y pedido actual en la sesión de Streamlit
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "current_order" not in st.session_state:
+    st.session_state.current_order = {}
 
-    st.write("👋 Bienvenido a nuestro restaurante virtual. ¿En qué puedo ayudarte hoy?")
+# Mostrar mensajes existentes
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    # Mostrar mensajes anteriores
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Área de entrada del usuario
-    if prompt := st.chat_input("Escribe tu mensaje aquí:"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = get_bot_response(prompt)
-            message_placeholder.markdown(full_response)
-
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-if __name__ == "__main__":
-    main()
+# Campo de entrada para el usuario
+if prompt := st.chat_input("¿En qué puedo ayudarte hoy?"):
+    # Agregar mensaje del usuario al historial
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Mostrar el mensaje del usuario
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Generar respuesta del chatbot
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        if "añadir" in prompt.lower() or "agregar" in prompt.lower():
+            item_match = re.search(r'(añadir|agregar)\s+(\d+)\s+(.+)', prompt.lower())
+            if item_match:
+                quantity = int(item_match.group(2))
+                item = item_match.group(3)
+                full_response = add_to_order(item, quantity)
+            else:
+                full_response = "No pude entender qué quieres añadir. Por favor, especifica la cantidad y el item."
+        elif "eliminar" in prompt.lower() or "quitar" in prompt.lower():
+            item_match = re.search(r'(eliminar|quitar)\s+(.+)', prompt.lower())
+            if item_match:
+                item = item_match.group(2)
+                full_response = remove_from_order(item)
+            else:
+                full_response = "No pude entender qué quieres eliminar. Por favor, especifica el item."
+        elif "cancelar" in prompt.lower():
+            full_response = cancel_order()
+        elif "confirmar" in prompt.lower():
+            full_response = confirm_order()
+        elif "total" in prompt.lower():
+            total = calculate_total()
+            full_response = f"El total actual de tu pedido es ${total:.2f}"
+        else:
+            full_response = handle_query(prompt)
+        
+        message_placeholder.markdown(full_response)
+    
+    # Agregar respuesta del chatbot al historial
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
