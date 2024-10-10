@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 import re
 from openai import OpenAI
+
 # Configuración de la página
 st.set_page_config(page_title="Chatbot de Restaurante", page_icon="🍽️")
 
-
-
-# Inicialización del cliente OPENAI
+# Inicialización del cliente OpenAI
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # Cargar datos
@@ -134,24 +133,21 @@ def handle_query(query):
             else:
                 return f"Lo siento, no encontré el precio de {item}."
     
-    # Si no se reconoce la consulta, usamos Groq para generar una respuesta
-    if groq_available:
+    # Si no se reconoce la consulta, usamos OpenAI para generar una respuesta
+    try:
         messages = st.session_state.messages + [{"role": "user", "content": query}]
-        try:
-            response = client.chat.completions.create(
-                messages=[
-                    {"role": m["role"], "content": m["content"]}
-                    for m in messages
-                ],
-                model="mixtral-8x7b-32768",
-                max_tokens=150,
-                temperature=0.7,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            st.error(f"Error generating response with Groq: {e}")
-            return "Lo siento, no pude entender tu consulta. ¿Podrías reformularla?"
-    else:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": m["role"], "content": m["content"]}
+                for m in messages
+            ],
+            max_tokens=150,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error generating response with OpenAI: {e}")
         return "Lo siento, no pude entender tu consulta. ¿Podrías reformularla?"
 
 # Título de la aplicación
