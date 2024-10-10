@@ -53,24 +53,34 @@ def get_delivery_cities():
     return "Realizamos entregas en las siguientes ciudades:\n" + "\n".join(delivery_cities[:10]) + "\n..."
 
 # Funciones de manejo de pedidos
+def calculate_total():
+    total = 0
+    for item, quantity in st.session_state.current_order.items():
+        price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price']
+        if not price.empty:
+            total += price.iloc[0] * quantity
+        else:
+            st.warning(f"No se encontró el precio para {item}. Por favor, verifica el menú.")
+    return total
+
 def add_to_order(item, quantity):
-    if item in st.session_state.current_order:
-        st.session_state.current_order[item] += quantity
+    if item.lower() in [i.lower() for i in menu_df['Item']]:
+        if item in st.session_state.current_order:
+            st.session_state.current_order[item] += quantity
+        else:
+            st.session_state.current_order[item] = quantity
+        total = calculate_total()
+        return f"Se ha añadido {quantity} {item}(s) a tu pedido. El total actual es ${total:.2f}"
     else:
-        st.session_state.current_order[item] = quantity
-    return f"Se ha añadido {quantity} {item}(s) a tu pedido."
+        return f"Lo siento, {item} no está en nuestro menú. Por favor, verifica el menú e intenta de nuevo."
 
 def remove_from_order(item):
-    if item in st.session_state.current_order:
-        del st.session_state.current_order[item]
-        return f"Se ha eliminado {item} de tu pedido."
+    if item.lower() in [i.lower() for i in st.session_state.current_order]:
+        del st.session_state.current_order[item.lower()]
+        total = calculate_total()
+        return f"Se ha eliminado {item} de tu pedido. El total actual es ${total:.2f}"
     else:
         return f"{item} no estaba en tu pedido."
-
-def calculate_total():
-    total = sum(menu_df.loc[menu_df['Item'] == item, 'Price'].iloc[0] * quantity 
-                for item, quantity in st.session_state.current_order.items())
-    return total
 
 def start_order():
     return ("Para realizar un pedido, por favor sigue estos pasos:\n"
@@ -85,7 +95,7 @@ def confirm_order():
         return "No hay ningún pedido para confirmar. ¿Quieres empezar uno nuevo?"
     
     order_df = pd.DataFrame(list(st.session_state.current_order.items()), columns=['Item', 'Quantity'])
-    order_df['Total'] = order_df.apply(lambda row: menu_df.loc[menu_df['Item'] == row['Item'], 'Price'].iloc[0] * row['Quantity'], axis=1)
+    order_df['Total'] = order_df.apply(lambda row: menu_df.loc[menu_df['Item'].str.lower() == row['Item'].lower(), 'Price'].iloc[0] * row['Quantity'], axis=1)
     order_df.to_csv('orders.csv', mode='a', header=False, index=False)
     total = calculate_total()
     st.session_state.current_order = {}
@@ -99,7 +109,7 @@ def cancel_order():
 
 # Función de filtrado de contenido
 def is_inappropriate(text):
-    inappropriate_words = ['palabrota1', 'palabrota2', 'insulto1', 'insulto2']
+    inappropriate_words = ['tonto', 'tonta', 'inutil']
     return any(word in text.lower() for word in inappropriate_words)
 
 # Función de manejo de consultas
