@@ -53,39 +53,24 @@ def get_delivery_cities():
     return "Realizamos entregas en las siguientes ciudades:\n" + "\n".join(delivery_cities[:10]) + "\n..."
 
 # Funciones de manejo de pedidos
-def calculate_total():
-    total = 0
-    for item, quantity in st.session_state.current_order.items():
-        price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price']
-        if not price.empty:
-            total += price.iloc[0] * quantity
-        else:
-            st.warning(f"No se encontró el precio para {item}. Por favor, verifica el menú.")
-    return total
-
 def add_to_order(item, quantity):
-    item_lower = item.lower()
-    menu_items_lower = [i.lower() for i in menu_df['Item']]
-    if item_lower in menu_items_lower:
-        index = menu_items_lower.index(item_lower)
-        actual_item = menu_df['Item'].iloc[index]
-        if actual_item in st.session_state.current_order:
-            st.session_state.current_order[actual_item] += quantity
-        else:
-            st.session_state.current_order[actual_item] = quantity
-        total = calculate_total()
-        return f"Se ha añadido {quantity} {actual_item}(s) a tu pedido. El total actual es ${total:.2f}"
+    if item in st.session_state.current_order:
+        st.session_state.current_order[item] += quantity
     else:
-        return f"Lo siento, {item} no está en nuestro menú. Por favor, verifica el menú e intenta de nuevo."
+        st.session_state.current_order[item] = quantity
+    return f"Se ha añadido {quantity} {item}(s) a tu pedido."
 
 def remove_from_order(item):
-    item_lower = item.lower()
-    for key in list(st.session_state.current_order.keys()):
-        if key.lower() == item_lower:
-            del st.session_state.current_order[key]
-            total = calculate_total()
-            return f"Se ha eliminado {key} de tu pedido. El total actual es ${total:.2f}"
-    return f"{item} no estaba en tu pedido."
+    if item in st.session_state.current_order:
+        del st.session_state.current_order[item]
+        return f"Se ha eliminado {item} de tu pedido."
+    else:
+        return f"{item} no estaba en tu pedido."
+
+def calculate_total():
+    total = sum(menu_df.loc[menu_df['Item'] == item, 'Price'].iloc[0] * quantity 
+                for item, quantity in st.session_state.current_order.items())
+    return total
 
 def start_order():
     return ("Para realizar un pedido, por favor sigue estos pasos:\n"
@@ -112,22 +97,9 @@ def cancel_order():
     st.session_state.current_order = {}
     return "Tu pedido ha sido cancelado."
 
-def show_current_order():
-    if not st.session_state.current_order:
-        return "No tienes ningún pedido en curso."
-    order_summary = "Tu pedido actual:\n"
-    total = 0
-    for item, quantity in st.session_state.current_order.items():
-        price = menu_df.loc[menu_df['Item'] == item, 'Price'].iloc[0]
-        item_total = price * quantity
-        total += item_total
-        order_summary += f"• {quantity} x {item} - ${item_total:.2f}\n"
-    order_summary += f"\nTotal: ${total:.2f}"
-    return order_summary
-
 # Función de filtrado de contenido
 def is_inappropriate(text):
-    inappropriate_words = ['palabrota1', 'palabrota2', 'insulto1', 'insulto2']
+    inappropriate_words = ['tonta', 'tonto']
     return any(word in text.lower() for word in inappropriate_words)
 
 # Función de manejo de consultas
@@ -137,15 +109,6 @@ def handle_query(query):
     
     query_lower = query.lower()
     
-    # Manejo de pedidos
-    order_match = re.findall(r'(\d+)\s*(.*?)(?=\d+\s*|$)', query_lower)
-    if order_match:
-        response = ""
-        for quantity, item in order_match:
-            item = item.strip()
-            response += add_to_order(item, int(quantity)) + "\n"
-        return response.strip()
-
     if re.search(r'\b(menú|carta)\b', query_lower):
         return get_menu()
     elif re.search(r'\b(entrega|reparto)\b', query_lower):
@@ -169,12 +132,6 @@ def handle_query(query):
                 return f"El precio de {item} es ${price.iloc[0]:.2f}"
             else:
                 return f"Lo siento, no encontré el precio de {item}."
-    elif "mostrar pedido" in query_lower:
-        return show_current_order()
-    elif "cancelar pedido" in query_lower:
-        return cancel_order()
-    elif "confirmar pedido" in query_lower:
-        return confirm_order()
     
     # Si no se reconoce la consulta, usamos OpenAI para generar una respuesta
     try:
@@ -219,17 +176,32 @@ if prompt := st.chat_input("¿En qué puedo ayudarte hoy?"):
     # Generar respuesta del chatbot
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        full_response = handle_query(prompt)
+        if "añadir" in prompt.lower() or "agregar" in prompt.lower():
+            item_match = re.search(r'(añadir|agregar)\s+(\d+)\s+(.+)', prompt.lower())
+            if item_match:
+                quantity = int(item_match.group(2))
+                item = item_match.group(3)
+                full_response = add_to_order(item, quantity)
+            else:
+                full_response = "No pude entender qué quieres añadir. Por favor, especifica la cantidad y el item."
+        elif "eliminar" in prompt.lower() or "quitar" in prompt.lower():
+            item_match = re.search(r'(eliminar|quitar)\s+(.+)', prompt.lower())
+            if item_match:
+                item = item_match.group(2)
+                full_response = remove_from_order(item)
+            else:
+                full_response = "No pude entender qué quieres eliminar. Por favor, especifica el item."
+        elif "cancelar" in prompt.lower():
+            full_response = cancel_order()
+        elif "confirmar" in prompt.lower():
+            full_response = confirm_order()
+        elif "total" in prompt.lower():
+            total = calculate_total()
+            full_response = f"El total actual de tu pedido es ${total:.2f}"
+        else:
+            full_response = handle_query(prompt)
+        
         message_placeholder.markdown(full_response)
     
     # Agregar respuesta del chatbot al historial
     st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-# Mostrar el pedido actual
-if st.session_state.current_order:
-    st.sidebar.markdown("## Pedido Actual")
-    st.sidebar.markdown(show_current_order())
-    if st.sidebar.button("Confirmar Pedido"):
-        st.sidebar.markdown(confirm_order())
-    if st.sidebar.button("Cancelar Pedido"):
-        st.sidebar.markdown(cancel_order())
