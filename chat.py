@@ -35,7 +35,7 @@ menu_df = load_data()
 
 # Función para obtener el menú como texto
 def get_menu_text():
-    menu_text = "Nuestro Menú:\n\n"
+    menu_text = "Nuestro Menú Completo:\n\n"
     for category, items in menu_df.groupby('Category'):
         menu_text += f"{category}:\n"
         for _, item in items.iterrows():
@@ -52,7 +52,7 @@ def generate_gpt_response(prompt, context):
             {"role": "user", "content": prompt}
         ]
         response = client.chat.completions.create(
-            model="gpt-4", # Asegúrate de usar el modelo más reciente disponible
+            model="gpt-3.5-turbo",  # Usamos gpt-3.5-turbo como modelo predeterminado
             messages=messages,
             max_tokens=150,
             temperature=0.7,
@@ -65,11 +65,15 @@ def generate_gpt_response(prompt, context):
 # Función de manejo de pedidos
 def handle_order(query):
     items = re.findall(r'(\d+)\s*([\w\s]+)', query)
+    if not items:
+        items = [(1, query.strip())]  # Asume cantidad 1 si no se especifica
+    
     response = ""
     for quantity, item in items:
         item = item.strip()
         if item.lower() in [i.lower() for i in menu_df['Item']]:
-            st.session_state.current_order[item] = st.session_state.current_order.get(item, 0) + int(quantity)
+            quantity = int(quantity) if isinstance(quantity, str) else quantity
+            st.session_state.current_order[item] = st.session_state.current_order.get(item, 0) + quantity
             price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0]
             response += f"Añadido {quantity} {item}(s) a tu pedido. Precio unitario: ${price:.2f}\n"
         else:
@@ -84,9 +88,10 @@ def handle_order(query):
 def handle_query(query):
     context = f"Estado actual del pedido: {st.session_state.order_state.name}. Pedido actual: {st.session_state.current_order}"
     
-    if "menú" in query.lower():
+    if "menú" in query.lower() or "menu" in query.lower():
         return get_menu_text()
-    elif st.session_state.order_state == OrderState.SELECTING_ITEMS:
+    elif st.session_state.order_state == OrderState.SELECTING_ITEMS or any(item.lower() in query.lower() for item in menu_df['Item']):
+        st.session_state.order_state = OrderState.SELECTING_ITEMS
         return handle_order(query)
     elif "confirmar pedido" in query.lower():
         st.session_state.order_state = OrderState.CONFIRMING_ORDER
@@ -94,9 +99,10 @@ def handle_query(query):
     elif st.session_state.order_state == OrderState.CONFIRMING_ORDER:
         if "sí" in query.lower():
             # Aquí iría la lógica para guardar el pedido
+            confirmed_order = st.session_state.current_order.copy()
             st.session_state.current_order = {}
             st.session_state.order_state = OrderState.INITIAL
-            return "¡Gracias! Tu pedido ha sido confirmado y será preparado pronto."
+            return f"¡Gracias! Tu pedido ha sido confirmado y será preparado pronto. Detalles del pedido: {confirmed_order}"
         elif "no" in query.lower():
             st.session_state.order_state = OrderState.SELECTING_ITEMS
             return "Entendido, puedes seguir modificando tu pedido. ¿Qué cambios te gustaría hacer?"
