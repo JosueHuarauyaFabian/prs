@@ -52,7 +52,7 @@ def generate_gpt_response(prompt, context):
             {"role": "user", "content": prompt}
         ]
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Usamos gpt-3.5-turbo como modelo predeterminado
+            model="gpt-4",  # Usamos gpt-3.5-turbo como modelo predeterminado
             messages=messages,
             max_tokens=150,
             temperature=0.7,
