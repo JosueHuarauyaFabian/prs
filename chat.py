@@ -43,26 +43,17 @@ def get_menu_text():
         menu_text += "\n"
     return menu_text
 
-# Función para generar respuesta con GPT
-def generate_gpt_response(prompt, context):
-    try:
-        messages = [
-            {"role": "system", "content": f"Eres un asistente de restaurante amable y servicial. Aquí está el menú actual: {get_menu_text()}"},
-            {"role": "system", "content": f"Contexto actual: {context}"},
-            {"role": "user", "content": prompt}
-        ]
-        response = client.chat.completions.create(
-            model="gpt-4",  # Usamos gpt-3.5-turbo como modelo predeterminado
-            messages=messages,
-            max_tokens=150,
-            temperature=0.7,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"Error generating response with OpenAI: {e}")
-        return "Lo siento, hubo un problema al procesar tu solicitud. ¿Podrías intentarlo de nuevo?"
+# Función para filtrar contenido inapropiado
+def is_inappropriate(text):
+    inappropriate_words = ['tonto', 'tonta']
+    return any(word in text.lower() for word in inappropriate_words)
 
-# Función de manejo de pedidos
+# Función para calcular el total del pedido
+def calculate_total():
+    return sum(menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0] * quantity 
+               for item, quantity in st.session_state.current_order.items())
+
+# Función para manejar pedidos
 def handle_order(query):
     items = re.findall(r'(\d+)\s*([\w\s]+)', query)
     if not items:
@@ -79,33 +70,82 @@ def handle_order(query):
         else:
             response += f"Lo siento, no encontré '{item}' en nuestro menú.\n"
     
-    total = sum(menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0] * quantity 
-                for item, quantity in st.session_state.current_order.items())
+    total = calculate_total()
     response += f"\nTotal actual del pedido: ${total:.2f}"
     return response
 
+# Función para obtener el precio de un item
+def get_item_price(item):
+    price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price']
+    if not price.empty:
+        return f"El precio de {item} es ${price.iloc[0]:.2f}"
+    else:
+        return f"Lo siento, no encontré el precio de {item}."
+
+# Función para cancelar el pedido
+def cancel_order():
+    st.session_state.current_order = {}
+    st.session_state.order_state = OrderState.INITIAL
+    return "Tu pedido ha sido cancelado. ¿Puedo ayudarte con algo más?"
+
+# Función para guardar el pedido
+def save_order(order):
+    with open('orders.json', 'a') as f:
+        json.dump(order, f)
+        f.write('\n')
+
+# Función para generar respuesta con GPT
+def generate_gpt_response(prompt, context):
+    try:
+        messages = [
+            {"role": "system", "content": f"Eres un asistente de restaurante amable y servicial. Aquí está el menú actual: {get_menu_text()}"},
+            {"role": "system", "content": f"Contexto actual: {context}"},
+            {"role": "user", "content": prompt}
+        ]
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            max_tokens=150,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"Error generating response with OpenAI: {e}")
+        return "Lo siento, hubo un problema al procesar tu solicitud. ¿Podrías intentarlo de nuevo?"
+
 # Función principal de manejo de consultas
 def handle_query(query):
+    if is_inappropriate(query):
+        return "Por favor, mantén un lenguaje respetuoso."
+
     context = f"Estado actual del pedido: {st.session_state.order_state.name}. Pedido actual: {st.session_state.current_order}"
     
     if "menú" in query.lower() or "menu" in query.lower():
         return get_menu_text()
+    elif "precio de" in query.lower():
+        item = query.lower().split("precio de")[-1].strip()
+        return get_item_price(item)
+    elif "cancelar pedido" in query.lower():
+        return cancel_order()
+    elif "descuento" in query.lower():
+        return "Lo siento, no ofrecemos descuentos en este momento."
     elif st.session_state.order_state == OrderState.SELECTING_ITEMS or any(item.lower() in query.lower() for item in menu_df['Item']):
         st.session_state.order_state = OrderState.SELECTING_ITEMS
         return handle_order(query)
     elif "confirmar pedido" in query.lower():
-        st.session_state.order_state = OrderState.CONFIRMING_ORDER
-        return "¿Estás seguro de que quieres confirmar tu pedido? Por favor, responde 'Sí' para confirmar o 'No' para hacer cambios."
-    elif st.session_state.order_state == OrderState.CONFIRMING_ORDER:
-        if "sí" in query.lower():
-            # Aquí iría la lógica para guardar el pedido
+        if st.session_state.current_order:
+            st.session_state.order_state = OrderState.CONFIRMING_ORDER
+            order = {
+                'items': st.session_state.current_order,
+                'total': calculate_total()
+            }
+            save_order(order)
             confirmed_order = st.session_state.current_order.copy()
             st.session_state.current_order = {}
             st.session_state.order_state = OrderState.INITIAL
-            return f"¡Gracias! Tu pedido ha sido confirmado y será preparado pronto. Detalles del pedido: {confirmed_order}"
-        elif "no" in query.lower():
-            st.session_state.order_state = OrderState.SELECTING_ITEMS
-            return "Entendido, puedes seguir modificando tu pedido. ¿Qué cambios te gustaría hacer?"
+            return f"¡Gracias! Tu pedido ha sido confirmado y guardado. Detalles del pedido: {confirmed_order}"
+        else:
+            return "No hay ningún pedido para confirmar. ¿Quieres hacer un pedido?"
     
     # Para cualquier otra consulta, usamos GPT
     return generate_gpt_response(query, context)
@@ -145,6 +185,5 @@ if st.session_state.current_order:
     st.sidebar.markdown("### Pedido Actual:")
     for item, quantity in st.session_state.current_order.items():
         st.sidebar.write(f"{item}: {quantity}")
-    total = sum(menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0] * quantity 
-                for item, quantity in st.session_state.current_order.items())
+    total = calculate_total()
     st.sidebar.markdown(f"**Total: ${total:.2f}**")
