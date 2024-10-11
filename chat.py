@@ -19,21 +19,24 @@ client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 class OrderState(Enum):
     INITIAL = 0
     SELECTING_ITEMS = 1
-    CONFIRMING_ADDRESS = 2
-    CONFIRMING_ORDER = 3
+    CONFIRMING_ORDER = 2
 
 # Cargar datos
 @st.cache_data
 def load_data():
     try:
         menu_df = pd.read_csv('menu.csv')
-        cities_df = pd.read_csv('us-cities.csv')
-        return menu_df, cities_df['City'].tolist()
+        return menu_df
     except Exception as e:
         logging.error(f"Error al cargar los datos: {e}")
-        return pd.DataFrame(), []
+        return pd.DataFrame()
 
-menu_df, delivery_cities = load_data()
+menu_df = load_data()
+
+# Función de filtrado de contenido
+def is_inappropriate(text):
+    inappropriate_words = ['tonto', 'tonta', 'estúpido', 'estúpida', 'idiota']
+    return any(word in text.lower() for word in inappropriate_words)
 
 # Funciones de manejo del menú
 def get_menu():
@@ -45,31 +48,7 @@ def get_menu():
         menu_text += "\n"
     return menu_text
 
-def get_category_details(category):
-    category_items = menu_df[menu_df['Category'] == category]
-    if category_items.empty:
-        return f"Lo siento, no encontré información sobre la categoría '{category}'."
-    
-    details = f"Detalles de {category}:\n\n"
-    for _, item in category_items.iterrows():
-        details += f"• {item['Item']} - {item['Serving Size']} - ${item['Price']:.2f}\n"
-    return details
-
-# Funciones de manejo de entregas
-def check_delivery(city):
-    if city.lower() in [c.lower() for c in delivery_cities]:
-        return f"✅ Sí, realizamos entregas en {city}."
-    else:
-        return f"❌ Lo siento, actualmente no realizamos entregas en {city}."
-
-def get_delivery_cities():
-    return "Realizamos entregas en las siguientes ciudades:\n" + "\n".join(delivery_cities[:10]) + "\n..."
-
 # Funciones de manejo de pedidos
-def calculate_total():
-    return sum(menu_df.loc[menu_df['Item'] == item, 'Price'].iloc[0] * quantity 
-               for item, quantity in st.session_state.current_order.items())
-
 def add_to_order(item, quantity):
     if item.lower() in [i.lower() for i in menu_df['Item']]:
         st.session_state.current_order[item] = st.session_state.current_order.get(item, 0) + quantity
@@ -77,15 +56,17 @@ def add_to_order(item, quantity):
         return f"Se ha añadido {quantity} {item}(s) a tu pedido. El total actual es ${total:.2f}"
     return f"Lo siento, {item} no está en nuestro menú. Por favor, verifica el menú e intenta de nuevo."
 
+def calculate_total():
+    return sum(menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0] * quantity 
+               for item, quantity in st.session_state.current_order.items())
+
 def confirm_order():
     if not st.session_state.current_order:
         return "No hay ningún pedido para confirmar. ¿Quieres empezar uno nuevo?"
     
     order_details = {
         'items': st.session_state.current_order,
-        'total': calculate_total(),
-        'address': st.session_state.delivery_address,
-        'city': st.session_state.delivery_city
+        'total': calculate_total()
     }
     
     # Guardar el pedido localmente
@@ -99,6 +80,9 @@ def confirm_order():
 
 # Función de manejo de consultas
 def handle_query(query):
+    if is_inappropriate(query):
+        return "Por favor, mantén un lenguaje respetuoso."
+
     query_lower = query.lower()
     
     if st.session_state.order_state == OrderState.INITIAL:
@@ -116,16 +100,8 @@ def handle_query(query):
                 response += add_to_order(item, quantity) + "\n"
             return response + "¿Quieres algo más o estás listo para confirmar tu pedido?"
         elif "listo" in query_lower or "confirmar" in query_lower:
-            st.session_state.order_state = OrderState.CONFIRMING_ADDRESS
-            return "Perfecto. ¿Cuál es tu dirección de entrega y ciudad?"
-
-    elif st.session_state.order_state == OrderState.CONFIRMING_ADDRESS:
-        address, city = extract_address_and_city(query)
-        if address and city:
-            st.session_state.delivery_address = address
-            st.session_state.delivery_city = city
             st.session_state.order_state = OrderState.CONFIRMING_ORDER
-            return f"Gracias. Tu pedido será entregado en {address}, {city}. El total es ${calculate_total():.2f}. ¿Quieres confirmar tu pedido?"
+            return f"Tu pedido actual es:\n{show_current_order()}\n¿Quieres confirmar este pedido?"
 
     elif st.session_state.order_state == OrderState.CONFIRMING_ORDER:
         if "sí" in query_lower or "confirmar" in query_lower:
@@ -135,14 +111,6 @@ def handle_query(query):
             st.session_state.current_order = {}
             return "Tu pedido ha sido cancelado. ¿Puedo ayudarte con algo más?"
 
-    # Manejo de otras consultas
-    if "entrega" in query_lower:
-        city = extract_city(query)
-        if city:
-            return check_delivery(city)
-        else:
-            return get_delivery_cities()
-
     # Si no se reconoce la consulta, usar OpenAI
     return generate_ai_response(query)
 
@@ -151,16 +119,16 @@ def extract_order_items(query):
     items = re.findall(r'(\d+)\s*([\w\s]+)', query)
     return [(item.strip(), int(quantity)) for quantity, item in items]
 
-def extract_address_and_city(query):
-    # Esta es una implementación simplificada. En un caso real, se necesitaría una lógica más robusta.
-    parts = query.split(',')
-    if len(parts) >= 2:
-        return parts[0].strip(), parts[1].strip()
-    return None, None
-
-def extract_city(query):
-    city_match = re.search(r'en\s+(\w+)', query)
-    return city_match.group(1) if city_match else None
+def show_current_order():
+    if not st.session_state.current_order:
+        return "No tienes ningún pedido en curso."
+    order_summary = "Tu pedido actual:\n"
+    for item, quantity in st.session_state.current_order.items():
+        price = menu_df.loc[menu_df['Item'].str.lower() == item.lower(), 'Price'].iloc[0]
+        item_total = price * quantity
+        order_summary += f"• {quantity} x {item} - ${item_total:.2f}\n"
+    order_summary += f"\nTotal: ${calculate_total():.2f}"
+    return order_summary
 
 def generate_ai_response(query):
     try:
@@ -183,10 +151,6 @@ if 'order_state' not in st.session_state:
     st.session_state.order_state = OrderState.INITIAL
 if 'current_order' not in st.session_state:
     st.session_state.current_order = {}
-if 'delivery_address' not in st.session_state:
-    st.session_state.delivery_address = ""
-if 'delivery_city' not in st.session_state:
-    st.session_state.delivery_city = ""
 
 # Interfaz de usuario de Streamlit
 st.title("🍽️ Chatbot de Restaurante")
@@ -214,7 +178,4 @@ if prompt := st.chat_input("¿En qué puedo ayudarte hoy?"):
 st.sidebar.markdown("## Estado del Pedido")
 st.sidebar.write(f"Estado: {st.session_state.order_state.name}")
 if st.session_state.current_order:
-    st.sidebar.markdown("### Pedido Actual:")
-    for item, quantity in st.session_state.current_order.items():
-        st.sidebar.write(f"{item}: {quantity}")
-    st.sidebar.markdown(f"**Total: ${calculate_total():.2f}**")
+    st.sidebar.markdown(show_current_order())
